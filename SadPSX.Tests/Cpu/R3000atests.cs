@@ -81,4 +81,72 @@ public sealed class R3000ATests
 
         Assert.Equal(0u, cpu.GetRegister(10));
     }
+
+    [Fact]
+    public void SubuSubtractsWithoutOverflowException()
+    {
+        var cpu = new R3000A();
+
+        // addiu $t0, $zero, 5
+        cpu.Execute(new Instruction(0x2408_0005));
+
+        // addiu $t1, $zero, 8
+        cpu.Execute(new Instruction(0x2409_0008));
+
+        // subu $t2, $t0, $t1
+        cpu.Execute(new Instruction(0x0109_5023));
+
+        Assert.Equal(0xFFFF_FFFDu, cpu.GetRegister(10));
+    }
+
+    [Fact]
+    public void AndCombinesRegisters()
+    {
+        var cpu = new R3000A();
+
+        // addiu $t0, $zero, 0x00FF
+        cpu.Execute(new Instruction(0x2408_00FF));
+
+        // addiu $t1, $zero, 0x0F0F
+        cpu.Execute(new Instruction(0x2409_0F0F));
+
+        // and $t2, $t0, $t1
+        cpu.Execute(new Instruction(0x0109_5024));
+
+        Assert.Equal(0x0000_000Fu, cpu.GetRegister(10));
+    }
+
+    [Fact]
+    public void OrCombinesRegisters()
+    {
+        var cpu = new R3000A();
+
+        // addiu $t0, $zero, 0x00F0
+        cpu.Execute(new Instruction(0x2408_00F0));
+
+        // addiu $t1, $zero, 0x0F00
+        cpu.Execute(new Instruction(0x2409_0F00));
+
+        // or $t2, $t0, $t1
+        cpu.Execute(new Instruction(0x0109_5025));
+
+        Assert.Equal(0x0000_0FF0u, cpu.GetRegister(10));
+    }
+
+    [Fact]
+    public void XorCombinesRegisters()
+    {
+        var cpu = new R3000A();
+
+        // addiu $t0, $zero, 0x00FF
+        cpu.Execute(new Instruction(0x2408_00FF));
+
+        // addiu $t1, $zero, 0x0F0F
+        cpu.Execute(new Instruction(0x2409_0F0F));
+
+        // xor $t2, $t0, $t1
+        cpu.Execute(new Instruction(0x0109_5026));
+
+        Assert.Equal(0x0000_0FF0u, cpu.GetRegister(10));
+    }
 }
