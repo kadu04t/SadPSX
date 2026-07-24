@@ -45,6 +45,14 @@ public sealed class R3000A
     private bool _branchPending;
     private uint _branchTarget;
 
+    // Verdadeiro quando a instrução atualmente em Execute() está sendo
+    // executada como o delay slot de um branch/jump já tomado. Usado para
+    // preencher corretamente o bit BD (branch delay) de COP0.CAUSE caso
+    // essa instrução dispare uma exceção.
+    private bool _executingInBranchDelaySlot;
+
+    public Cop0 Cop0 { get; } = new();
+
     public R3000A(Bus bus)
     {
         _bus = bus ?? throw new ArgumentNullException(nameof(bus));
@@ -80,6 +88,12 @@ public sealed class R3000A
 
         _branchPending = false;
         _branchTarget = 0;
+        _executingInBranchDelaySlot = false;
+        _exceptionRaised = false;
+
+        Cop0.SetRegister(12, 0); // SR
+        Cop0.SetRegister(13, 0); // CAUSE
+        Cop0.SetRegister(14, 0); // EPC
     }
 
     /// <summary>
@@ -106,11 +120,23 @@ public sealed class R3000A
         uint pendingTarget = _branchTarget;
         _branchPending = false;
 
+        // A instrução atual está em um delay slot se, e somente se, havia
+        // um branch pendente agendado no ciclo anterior.
+        _executingInBranchDelaySlot = applyPendingBranchAfterThisStep;
+        _exceptionRaised = false;
+
         Execute(new Instruction(rawInstruction));
 
-        uint newPc = applyPendingBranchAfterThisStep ? pendingTarget : NextPc;
-        Pc = newPc;
-        NextPc = unchecked(newPc + 4);
+        if (!_exceptionRaised)
+        {
+            // Fluxo normal: avança Pc/NextPc considerando um eventual
+            // branch agendado por esta instrução.
+            uint newPc = applyPendingBranchAfterThisStep ? pendingTarget : NextPc;
+            Pc = newPc;
+            NextPc = unchecked(newPc + 4);
+        }
+        // Se uma exceção ocorreu, RaiseException() já deixou Pc/NextPc
+        // apontando para o vetor de exceção correto — nada a fazer aqui.
 
         // Proteção adicional da propriedade arquitetural do registrador $zero.
         _registers[0] = 0;
@@ -124,6 +150,50 @@ public sealed class R3000A
     {
         _branchPending = true;
         _branchTarget = target;
+    }
+
+    // Vetores de exceção do R3000A. O vetor real depende do bit BEV (bit 22)
+    // de SR: quando BEV=0 (padrão após o reset do PS1 ser normalmente
+    // desligado pela BIOS), o handler vive na RAM; quando BEV=1 (estado
+    // inicial logo após reset), o handler vive na própria BIOS.
+    private const uint ExceptionVectorRam = 0x8000_0080;
+    private const uint ExceptionVectorRom = 0xBFC0_0180;
+
+    private const uint StatusBootExceptionVectorsBit = 1u << 22; // SR.BEV
+
+    // Sinaliza ao Step() que uma exceção ocorreu durante Execute() e que o
+    // Pc/NextPc já foram definidos para o vetor de exceção — o Step() deve
+    // então pular seu próprio cálculo normal de avanço de Pc/NextPc.
+    private bool _exceptionRaised;
+
+    /// <summary>
+    /// Dispara uma exceção a partir da instrução atualmente em execução.
+    /// Atualiza COP0 (EPC, CAUSE, pilha de modo em SR) e redireciona Pc para
+    /// o vetor de exceção apropriado, cancelando qualquer branch delay slot
+    /// que estivesse pendente (a exceção interrompe o fluxo imediatamente,
+    /// o delay slot agendado não chega a ser executado).
+    /// </summary>
+    private void RaiseException(ExceptionCode code)
+    {
+        // Se a instrução que causou a exceção está em um delay slot, o
+        // endereço de retorno correto é o do PRÓPRIO branch (Pc - 4), não o
+        // do delay slot em si — é isso que permite ao handler, ao retornar,
+        // reexecutar o branch e reconstituir corretamente o delay slot.
+        uint epc = _executingInBranchDelaySlot ? unchecked(Pc - 4) : Pc;
+
+        Cop0.RaiseException(code, epc, _executingInBranchDelaySlot);
+
+        bool useRomVector = (Cop0.Sr & StatusBootExceptionVectorsBit) != 0;
+        uint vector = useRomVector ? ExceptionVectorRom : ExceptionVectorRam;
+
+        // A exceção interrompe o fluxo imediatamente: qualquer branch que
+        // estivesse agendado para depois do delay slot é descartado.
+        _branchPending = false;
+
+        Pc = vector;
+        NextPc = unchecked(vector + 4);
+
+        _exceptionRaised = true;
     }
 
     public uint GetRegister(int index)
@@ -270,6 +340,10 @@ public sealed class R3000A
                 ScheduleBranch(JumpTarget(instruction));
                 break;
 
+            case 0x10: // COP0: MFC0 / MTC0 / RFE
+                ExecuteCop0(instruction);
+                break;
+
             default:
                 throw new NotImplementedException(
                     $"Opcode 0x{instruction.Opcode:X2} não implementado.");
@@ -277,6 +351,33 @@ public sealed class R3000A
 
         // Mesmo em execução direta, $zero deve continuar protegido.
         _registers[0] = 0;
+    }
+
+    private void ExecuteCop0(Instruction instruction)
+    {
+        // O campo "rs" (bits 25:21) diferencia as sub-operações do COP0.
+        switch (instruction.Rs)
+        {
+            case 0x00: // MFC0 rt, rd  (rd aqui é o registrador COP0 de origem)
+                SetRegister(instruction.Rt, Cop0.GetRegister(instruction.Rd));
+                break;
+
+            case 0x04: // MTC0 rt, rd  (rd aqui é o registrador COP0 de destino)
+                Cop0.SetRegister(instruction.Rd, GetRegister(instruction.Rt));
+                break;
+
+            case 0x10: // RFE (Return From Exception): identificado por
+                       // rs=0b10000 com function=0b010000 no restante da
+                       // instrução, mas na prática é a única operação COP0
+                       // que usa esse valor de rs em código real, então
+                       // tratamos diretamente aqui.
+                Cop0.ReturnFromException();
+                break;
+
+            default:
+                throw new NotImplementedException(
+                    $"Operação COP0 com rs=0x{instruction.Rs:X2} não implementada.");
+        }
     }
 
     // Alvo de branches condicionais: relativo a NextPc (o endereço do delay
@@ -635,6 +736,14 @@ public sealed class R3000A
                 }
                 break;
             }
+
+            case 0x0C: // SYSCALL
+                RaiseException(ExceptionCode.Syscall);
+                break;
+
+            case 0x0D: // BREAK
+                RaiseException(ExceptionCode.Breakpoint);
+                break;
 
             default:
                 throw new NotImplementedException(
