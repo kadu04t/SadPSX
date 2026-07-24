@@ -39,6 +39,12 @@ public sealed class R3000A
     /// </summary>
     public ulong Cycles { get; private set; }
 
+    // Suporte a branch delay slot: quando um branch/jump é tomado, o desvio
+    // não acontece imediatamente. A instrução seguinte (o "delay slot")
+    // sempre executa primeiro, e só depois o PC pula para o alvo agendado.
+    private bool _branchPending;
+    private uint _branchTarget;
+
     public R3000A(Bus bus)
     {
         _bus = bus ?? throw new ArgumentNullException(nameof(bus));
@@ -71,32 +77,53 @@ public sealed class R3000A
         Hi = 0;
         Lo = 0;
         Cycles = 0;
+
+        _branchPending = false;
+        _branchTarget = 0;
     }
 
     /// <summary>
     /// Busca, decodifica e executa uma instrução através do barramento.
+    ///
+    /// Ordem crítica: a instrução é executada com Pc/NextPc ainda nos
+    /// valores ATUAIS (Pc = endereço da instrução sendo executada, NextPc =
+    /// endereço do delay slot). Isso é o que permite aos cálculos de branch
+    /// target, jump target e endereço de retorno (link register) usarem
+    /// NextPc como referência correta. Só depois que Execute termina é que
+    /// Pc/NextPc avançam para o próximo ciclo.
+    ///
+    /// Quando há um branch pendente (agendado no ciclo anterior — ou seja,
+    /// este Step está executando o delay slot de um branch já tomado), o
+    /// alvo do branch se torna o próximo Pc, não o próximo NextPc. NextPc
+    /// é sempre recalculado a partir do novo Pc (+4), pronto para o ciclo
+    /// seguinte.
     /// </summary>
     public void Step()
     {
         uint rawInstruction = _bus.Read32(Pc);
 
-        /*
-         * A ordem é importante:
-         *
-         * 1. A instrução é buscada no PC atual.
-         * 2. PC passa a apontar para a instrução do delay slot.
-         * 3. NextPC avança normalmente.
-         * 4. A instrução é executada e poderá modificar NextPC no futuro.
-         */
-        Pc = NextPc;
-        NextPc = unchecked(NextPc + 4);
+        bool applyPendingBranchAfterThisStep = _branchPending;
+        uint pendingTarget = _branchTarget;
+        _branchPending = false;
 
         Execute(new Instruction(rawInstruction));
+
+        uint newPc = applyPendingBranchAfterThisStep ? pendingTarget : NextPc;
+        Pc = newPc;
+        NextPc = unchecked(newPc + 4);
 
         // Proteção adicional da propriedade arquitetural do registrador $zero.
         _registers[0] = 0;
 
         Cycles = unchecked(Cycles + 1);
+    }
+
+    // Usado pelas instruções de branch/jump para agendar um desvio que só
+    // terá efeito depois que a instrução do delay slot for executada.
+    private void ScheduleBranch(uint target)
+    {
+        _branchPending = true;
+        _branchTarget = target;
     }
 
     public uint GetRegister(int index)
@@ -210,6 +237,39 @@ public sealed class R3000A
                 ExecuteSw(instruction);
                 break;
 
+            case 0x04: // BEQ rs, rt, offset
+                if (GetRegister(instruction.Rs) == GetRegister(instruction.Rt))
+                    ScheduleBranch(BranchTarget(instruction));
+                break;
+
+            case 0x05: // BNE rs, rt, offset
+                if (GetRegister(instruction.Rs) != GetRegister(instruction.Rt))
+                    ScheduleBranch(BranchTarget(instruction));
+                break;
+
+            case 0x06: // BLEZ rs, offset (rs <= 0, com sinal)
+                if ((int)GetRegister(instruction.Rs) <= 0)
+                    ScheduleBranch(BranchTarget(instruction));
+                break;
+
+            case 0x07: // BGTZ rs, offset (rs > 0, com sinal)
+                if ((int)GetRegister(instruction.Rs) > 0)
+                    ScheduleBranch(BranchTarget(instruction));
+                break;
+
+            case 0x01: // REGIMM: BLTZ / BGEZ / BLTZAL / BGEZAL (diferenciados por rt)
+                ExecuteRegImm(instruction);
+                break;
+
+            case 0x02: // J target
+                ScheduleBranch(JumpTarget(instruction));
+                break;
+
+            case 0x03: // JAL target
+                SetRegister(31, unchecked(NextPc + 4)); // endereço de retorno ($ra)
+                ScheduleBranch(JumpTarget(instruction));
+                break;
+
             default:
                 throw new NotImplementedException(
                     $"Opcode 0x{instruction.Opcode:X2} não implementado.");
@@ -217,6 +277,38 @@ public sealed class R3000A
 
         // Mesmo em execução direta, $zero deve continuar protegido.
         _registers[0] = 0;
+    }
+
+    // Alvo de branches condicionais: relativo a NextPc (o endereço do delay
+    // slot), não ao Pc da instrução de branch em si.
+    private uint BranchTarget(Instruction instruction) =>
+        unchecked(NextPc + ((uint)instruction.SignedImmediate << 2));
+
+    // Alvo de J/JAL: mantém os 4 bits mais altos do PC atual (região), e
+    // substitui os 28 bits baixos pelo campo de 26 bits do jump target
+    // deslocado 2 bits à esquerda (instruções são alinhadas em 4 bytes).
+    private uint JumpTarget(Instruction instruction) =>
+        (NextPc & 0xF000_0000) | (instruction.JumpTarget << 2);
+
+    private void ExecuteRegImm(Instruction instruction)
+    {
+        bool isLessThanZero = (int)GetRegister(instruction.Rs) < 0;
+        bool isGreaterOrEqualZero = !isLessThanZero;
+
+        // O bit mais baixo de rt distingue LTZ (0) de GEZ (1).
+        // O bit mais alto de rt distingue "sem link" (0) de "com link" (1, *AL*).
+        bool linkVariant = (instruction.Rt & 0x10) != 0;
+        bool isGezVariant = (instruction.Rt & 0x01) != 0;
+
+        bool takeBranch = isGezVariant ? isGreaterOrEqualZero : isLessThanZero;
+
+        // BLTZAL/BGEZAL sempre gravam o endereço de retorno em $ra,
+        // mesmo quando o branch não é tomado — assim como no hardware real.
+        if (linkVariant)
+            SetRegister(31, unchecked(NextPc + 4));
+
+        if (takeBranch)
+            ScheduleBranch(BranchTarget(instruction));
     }
 
     private void ExecuteAddiu(Instruction instruction)
@@ -441,6 +533,106 @@ public sealed class R3000A
                     instruction.Rd,
                     left < right ? 1u : 0u);
 
+                break;
+            }
+
+            case 0x08: // JR rs
+                ScheduleBranch(GetRegister(instruction.Rs));
+                break;
+
+            case 0x09: // JALR rd, rs
+            {
+                uint target = GetRegister(instruction.Rs);
+                uint returnAddress = unchecked(NextPc + 4);
+
+                SetRegister(instruction.Rd, returnAddress);
+                ScheduleBranch(target);
+                break;
+            }
+
+            case 0x10: // MFHI rd
+                SetRegister(instruction.Rd, Hi);
+                break;
+
+            case 0x11: // MTHI rs
+                Hi = GetRegister(instruction.Rs);
+                break;
+
+            case 0x12: // MFLO rd
+                SetRegister(instruction.Rd, Lo);
+                break;
+
+            case 0x13: // MTLO rs
+                Lo = GetRegister(instruction.Rs);
+                break;
+
+            case 0x18: // MULT rs, rt (signed, 32x32 -> 64 bits em Hi:Lo)
+            {
+                long left = unchecked((int)GetRegister(instruction.Rs));
+                long right = unchecked((int)GetRegister(instruction.Rt));
+                long product = unchecked(left * right);
+
+                Lo = unchecked((uint)product);
+                Hi = unchecked((uint)(product >> 32));
+                break;
+            }
+
+            case 0x19: // MULTU rs, rt (unsigned, 32x32 -> 64 bits em Hi:Lo)
+            {
+                ulong left = GetRegister(instruction.Rs);
+                ulong right = GetRegister(instruction.Rt);
+                ulong product = unchecked(left * right);
+
+                Lo = unchecked((uint)product);
+                Hi = unchecked((uint)(product >> 32));
+                break;
+            }
+
+            case 0x1A: // DIV rs, rt (signed: Lo=quociente, Hi=resto)
+            {
+                int dividend = unchecked((int)GetRegister(instruction.Rs));
+                int divisor = unchecked((int)GetRegister(instruction.Rt));
+
+                if (divisor == 0)
+                {
+                    // Comportamento definido do hardware real para divisão
+                    // por zero (não lança exceção, ao contrário do C#).
+                    Lo = dividend < 0 ? 1u : 0xFFFF_FFFFu;
+                    Hi = unchecked((uint)dividend);
+                }
+                else if (dividend == int.MinValue && divisor == -1)
+                {
+                    // Caso especial: -2147483648 / -1 estouraria o range de
+                    // int. O hardware real produz este resultado específico
+                    // em vez de lançar overflow.
+                    Lo = unchecked((uint)int.MinValue);
+                    Hi = 0;
+                }
+                else
+                {
+                    Lo = unchecked((uint)(dividend / divisor));
+                    Hi = unchecked((uint)(dividend % divisor));
+                }
+                break;
+            }
+
+            case 0x1B: // DIVU rs, rt (unsigned: Lo=quociente, Hi=resto)
+            {
+                uint dividend = GetRegister(instruction.Rs);
+                uint divisor = GetRegister(instruction.Rt);
+
+                if (divisor == 0)
+                {
+                    // Comportamento definido do hardware real para divisão
+                    // por zero (não lança exceção, ao contrário do C#).
+                    Lo = 0xFFFF_FFFFu;
+                    Hi = dividend;
+                }
+                else
+                {
+                    Lo = dividend / divisor;
+                    Hi = dividend % divisor;
+                }
                 break;
             }
 
