@@ -1,56 +1,216 @@
 namespace SadPSX.Core.Memory;
 
-/// <summary>
-/// Stub temporário para a região de I/O Ports (0x1F80_1000 – 0x1F80_2FFF)
-/// e Expansion Region 2 (0x1F80_2000 – 0x1F80_3FFF).
-///
-/// Nenhum periférico real (GPU, SPU, DMA, timers, controllers, CD-ROM etc.)
-/// está implementado ainda — este stub existe para que o Bus tenha um
-/// destino válido para esses endereços sem quebrar a execução. Leituras
-/// não reconhecidas retornam 0; escritas são simplesmente descartadas.
-///
-/// Cada registrador real será migrado para uma classe dedicada (Gpu, Spu,
-/// Dma, Timers, ...) conforme for implementado; até lá, os acessos passam
-/// por aqui.
-/// </summary>
 public sealed class Mmio
 {
-    // Loga o endereço do último acesso não reconhecido, para facilitar
-    // depuração enquanto o hardware real ainda não existe. Não afeta o
-    // comportamento da emulação.
+    private readonly List<MmioAccess> _accessLog = new();
+    private readonly Dictionary<MmioAccessKey, MmioAccessSummary> _accessSummaries = new();
+    private ulong _accessSequence;
+
+    public Mmio()
+        : this(new MemoryControl())
+    {
+    }
+
+    public Mmio(MemoryControl memoryControl)
+    {
+        MemoryControl = memoryControl ?? throw new ArgumentNullException(nameof(memoryControl));
+    }
+
+    public MemoryControl MemoryControl { get; }
     public uint? LastUnhandledReadAddress { get; private set; }
     public uint? LastUnhandledWriteAddress { get; private set; }
+    public int MaxLoggedAccesses { get; set; } = 256;
+    public ulong TotalAccessCount => _accessSequence;
+    public IReadOnlyList<MmioAccess> AccessLog => _accessLog;
+    public IReadOnlyCollection<MmioAccessSummary> AccessSummaries => _accessSummaries.Values;
+
+    public event Action<MmioAccess>? Accessed;
 
     public byte Read8(uint address)
     {
-        LastUnhandledReadAddress = address;
-        return 0;
+        bool handled = MemoryControl.Handles(address);
+        byte value = handled ? MemoryControl.Read8(address) : (byte)0;
+
+        if (!handled)
+            LastUnhandledReadAddress = address;
+
+        Record(address, MemoryAccessKind.Read, 1, value, handled);
+        return value;
     }
 
     public void Write8(uint address, byte value)
     {
-        LastUnhandledWriteAddress = address;
+        bool handled = MemoryControl.Handles(address);
+
+        if (handled)
+            MemoryControl.Write8(address, value);
+        else
+            LastUnhandledWriteAddress = address;
+
+        Record(address, MemoryAccessKind.Write, 1, value, handled);
     }
 
     public ushort Read16(uint address)
     {
-        LastUnhandledReadAddress = address;
-        return 0;
+        bool handled = MemoryControl.Handles(address);
+        ushort value = handled ? MemoryControl.Read16(address) : (ushort)0;
+
+        if (!handled)
+            LastUnhandledReadAddress = address;
+
+        Record(address, MemoryAccessKind.Read, 2, value, handled);
+        return value;
     }
 
     public void Write16(uint address, ushort value)
     {
-        LastUnhandledWriteAddress = address;
+        bool handled = MemoryControl.Handles(address);
+
+        if (handled)
+            MemoryControl.Write16(address, value);
+        else
+            LastUnhandledWriteAddress = address;
+
+        Record(address, MemoryAccessKind.Write, 2, value, handled);
     }
 
     public uint Read32(uint address)
     {
-        LastUnhandledReadAddress = address;
-        return 0;
+        bool handled = MemoryControl.Handles(address);
+        uint value = handled ? MemoryControl.Read32(address) : 0;
+
+        if (!handled)
+            LastUnhandledReadAddress = address;
+
+        Record(address, MemoryAccessKind.Read, 4, value, handled);
+        return value;
+    }
+
+    public uint Peek32(uint address)
+    {
+        return MemoryControl.Handles(address)
+            ? MemoryControl.Read32(address)
+            : 0;
     }
 
     public void Write32(uint address, uint value)
     {
-        LastUnhandledWriteAddress = address;
+        bool handled = MemoryControl.Handles(address);
+
+        if (handled)
+            MemoryControl.Write32(address, value);
+        else
+            LastUnhandledWriteAddress = address;
+
+        Record(address, MemoryAccessKind.Write, 4, value, handled);
+    }
+
+    public void ClearAccessLog()
+    {
+        _accessLog.Clear();
+        _accessSummaries.Clear();
+        _accessSequence = 0;
+        LastUnhandledReadAddress = null;
+        LastUnhandledWriteAddress = null;
+    }
+
+    private void Record(
+        uint address,
+        MemoryAccessKind kind,
+        int width,
+        uint value,
+        bool handled)
+    {
+        _accessSequence++;
+        string registerName = handled
+            ? MemoryControl.GetRegisterName(address)
+            : "UNHANDLED";
+
+        var access = new MmioAccess(
+            _accessSequence,
+            address,
+            kind,
+            width,
+            value,
+            handled,
+            registerName);
+
+        if (_accessLog.Count < MaxLoggedAccesses)
+            _accessLog.Add(access);
+
+        var key = new MmioAccessKey(address, kind, width, handled);
+        if (!_accessSummaries.TryGetValue(key, out MmioAccessSummary? summary))
+        {
+            summary = new MmioAccessSummary(
+                address,
+                kind,
+                width,
+                handled,
+                registerName,
+                _accessSequence);
+            _accessSummaries.Add(key, summary);
+        }
+
+        summary.Record(_accessSequence, value);
+        Accessed?.Invoke(access);
     }
 }
+
+public readonly record struct MmioAccess(
+    ulong Sequence,
+    uint Address,
+    MemoryAccessKind Kind,
+    int Width,
+    uint Value,
+    bool Handled,
+    string RegisterName)
+{
+    public override string ToString()
+    {
+        string operation = Kind == MemoryAccessKind.Write ? "W" : "R";
+        return $"#{Sequence,6} {operation}{Width * 8,-2} 0x{Address:X8} = 0x{Value:X8} " +
+               $"{RegisterName}{(Handled ? string.Empty : " (não tratado)")}";
+    }
+}
+
+public sealed class MmioAccessSummary
+{
+    internal MmioAccessSummary(
+        uint address,
+        MemoryAccessKind kind,
+        int width,
+        bool handled,
+        string registerName,
+        ulong firstSequence)
+    {
+        Address = address;
+        Kind = kind;
+        Width = width;
+        Handled = handled;
+        RegisterName = registerName;
+        FirstSequence = firstSequence;
+    }
+
+    public uint Address { get; }
+    public MemoryAccessKind Kind { get; }
+    public int Width { get; }
+    public bool Handled { get; }
+    public string RegisterName { get; }
+    public ulong FirstSequence { get; }
+    public ulong LastSequence { get; private set; }
+    public ulong Count { get; private set; }
+    public uint LastValue { get; private set; }
+
+    internal void Record(ulong sequence, uint value)
+    {
+        LastSequence = sequence;
+        LastValue = value;
+        Count++;
+    }
+}
+
+internal readonly record struct MmioAccessKey(
+    uint Address,
+    MemoryAccessKind Kind,
+    int Width,
+    bool Handled);

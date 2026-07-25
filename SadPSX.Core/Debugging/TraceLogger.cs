@@ -69,7 +69,7 @@ public sealed class TraceLogger
         {
             try
             {
-                rawInstruction = _machine.Bus.Read32(pc);
+                rawInstruction = _machine.Bus.Peek32(pc);
                 var instruction = new Instruction(rawInstruction);
                 disassembly = Disassembler.Disassemble(instruction, pc);
             }

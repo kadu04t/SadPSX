@@ -21,6 +21,8 @@ namespace SadPSX.Core.Memory;
 /// </summary>
 public sealed class Bus
 {
+    private ulong _accessSequence;
+
     // --- Bases e tamanhos das regiões físicas ---
     private const uint RamSize = Ram.SizeInBytes;
     // A RAM é espelhada 4 vezes dentro da janela de 8 MiB reservada a ela
@@ -49,7 +51,10 @@ public sealed class Bus
     public Scratchpad Scratchpad { get; }
     public BiosRom Bios { get; }
     public Mmio Mmio { get; }
+    public MemoryControl MemoryControl => Mmio.MemoryControl;
     public ExpansionRegion1 Expansion1 { get; }
+
+    public event Action<MemoryAccess>? MemoryAccessed;
 
     public Bus(Ram ram, Scratchpad scratchpad, BiosRom bios, Mmio mmio, ExpansionRegion1 expansion1)
     {
@@ -74,22 +79,25 @@ public sealed class Bus
 
     public byte Read8(uint address)
     {
-        var (region, offset) = Route(address, out _);
-        return region switch
+        var (region, offset) = Route(address, out MemorySegment segment);
+        byte value = region switch
         {
             MemoryRegion.Ram => Ram.Read8(offset),
             MemoryRegion.Scratchpad => Scratchpad.Read8(offset),
             MemoryRegion.Mmio => Mmio.Read8(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read8(offset),
             MemoryRegion.Expansion1 => Expansion1.Read8(offset),
-            MemoryRegion.CacheControl => 0, // Cache Control não tem leitura significativa modelada ainda
+            MemoryRegion.CacheControl => Mmio.Read8(offset + CacheControlBase),
             _ => throw UnmappedAddress(address),
         };
+
+        NotifyAccess(address, segment, region, MemoryAccessKind.Read, 1, value);
+        return value;
     }
 
     public void Write8(uint address, byte value)
     {
-        var (region, offset) = Route(address, out _);
+        var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
             case MemoryRegion.Ram: Ram.Write8(offset, value); break;
@@ -97,29 +105,34 @@ public sealed class Bus
             case MemoryRegion.Mmio: Mmio.Write8(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break; // ROM: escrita é ignorada, como no hardware real
             case MemoryRegion.Expansion1: Expansion1.Write8(offset, value); break;
-            case MemoryRegion.CacheControl: break; // ainda não modelado
+            case MemoryRegion.CacheControl: Mmio.Write8(offset + CacheControlBase, value); break;
             default: throw UnmappedAddress(address);
         }
+
+        NotifyAccess(address, segment, region, MemoryAccessKind.Write, 1, value);
     }
 
     public ushort Read16(uint address)
     {
-        var (region, offset) = Route(address, out _);
-        return region switch
+        var (region, offset) = Route(address, out MemorySegment segment);
+        ushort value = region switch
         {
             MemoryRegion.Ram => Ram.Read16(offset),
             MemoryRegion.Scratchpad => Scratchpad.Read16(offset),
             MemoryRegion.Mmio => Mmio.Read16(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read16(offset),
             MemoryRegion.Expansion1 => Expansion1.Read16(offset),
-            MemoryRegion.CacheControl => 0,
+            MemoryRegion.CacheControl => Mmio.Read16(offset + CacheControlBase),
             _ => throw UnmappedAddress(address),
         };
+
+        NotifyAccess(address, segment, region, MemoryAccessKind.Read, 2, value);
+        return value;
     }
 
     public void Write16(uint address, ushort value)
     {
-        var (region, offset) = Route(address, out _);
+        var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
             case MemoryRegion.Ram: Ram.Write16(offset, value); break;
@@ -127,29 +140,56 @@ public sealed class Bus
             case MemoryRegion.Mmio: Mmio.Write16(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break;
             case MemoryRegion.Expansion1: Expansion1.Write16(offset, value); break;
-            case MemoryRegion.CacheControl: break;
+            case MemoryRegion.CacheControl: Mmio.Write16(offset + CacheControlBase, value); break;
             default: throw UnmappedAddress(address);
         }
+
+        NotifyAccess(address, segment, region, MemoryAccessKind.Write, 2, value);
     }
 
     public uint Read32(uint address)
     {
-        var (region, offset) = Route(address, out _);
-        return region switch
+        return Read32Core(address, MemoryAccessKind.Read, notifyAccess: true);
+    }
+
+    public uint ReadInstruction32(uint address)
+    {
+        return Read32Core(address, MemoryAccessKind.InstructionFetch, notifyAccess: true);
+    }
+
+    public uint Peek32(uint address)
+    {
+        return Read32Core(address, MemoryAccessKind.Read, notifyAccess: false);
+    }
+
+    private uint Read32Core(
+        uint address,
+        MemoryAccessKind kind,
+        bool notifyAccess)
+    {
+        var (region, offset) = Route(address, out MemorySegment segment);
+        uint value = region switch
         {
             MemoryRegion.Ram => Ram.Read32(offset),
             MemoryRegion.Scratchpad => Scratchpad.Read32(offset),
-            MemoryRegion.Mmio => Mmio.Read32(offset + IoPortsBase),
+            MemoryRegion.Mmio when notifyAccess => Mmio.Read32(offset + IoPortsBase),
+            MemoryRegion.Mmio => Mmio.Peek32(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read32(offset),
             MemoryRegion.Expansion1 => Expansion1.Read32(offset),
-            MemoryRegion.CacheControl => 0,
+            MemoryRegion.CacheControl when notifyAccess => Mmio.Read32(offset + CacheControlBase),
+            MemoryRegion.CacheControl => Mmio.Peek32(offset + CacheControlBase),
             _ => throw UnmappedAddress(address),
         };
+
+        if (notifyAccess)
+            NotifyAccess(address, segment, region, kind, 4, value);
+
+        return value;
     }
 
     public void Write32(uint address, uint value)
     {
-        var (region, offset) = Route(address, out _);
+        var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
             case MemoryRegion.Ram: Ram.Write32(offset, value); break;
@@ -157,9 +197,35 @@ public sealed class Bus
             case MemoryRegion.Mmio: Mmio.Write32(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break;
             case MemoryRegion.Expansion1: Expansion1.Write32(offset, value); break;
-            case MemoryRegion.CacheControl: break;
+            case MemoryRegion.CacheControl: Mmio.Write32(offset + CacheControlBase, value); break;
             default: throw UnmappedAddress(address);
         }
+
+        NotifyAccess(address, segment, region, MemoryAccessKind.Write, 4, value);
+    }
+
+    private void NotifyAccess(
+        uint virtualAddress,
+        MemorySegment segment,
+        MemoryRegion region,
+        MemoryAccessKind kind,
+        int width,
+        uint value)
+    {
+        if (MemoryAccessed is null)
+            return;
+
+        uint physicalAddress = TranslateToPhysical(virtualAddress, out _);
+        _accessSequence++;
+        MemoryAccessed.Invoke(new MemoryAccess(
+            _accessSequence,
+            virtualAddress,
+            physicalAddress,
+            segment,
+            kind,
+            width,
+            value,
+            region.ToString()));
     }
 
     /// <summary>
@@ -270,4 +336,37 @@ public enum MemorySegment
     Kseg0,
     Kseg1,
     Kseg2,
+}
+
+public enum MemoryAccessKind
+{
+    InstructionFetch,
+    Read,
+    Write,
+}
+
+public readonly record struct MemoryAccess(
+    ulong Sequence,
+    uint VirtualAddress,
+    uint PhysicalAddress,
+    MemorySegment Segment,
+    MemoryAccessKind Kind,
+    int Width,
+    uint Value,
+    string Region)
+{
+    public override string ToString()
+    {
+        string operation = Kind switch
+        {
+            MemoryAccessKind.InstructionFetch => "IF",
+            MemoryAccessKind.Read => "R",
+            MemoryAccessKind.Write => "W",
+            _ => "?",
+        };
+
+        return $"#{Sequence,6} {operation,-2}{Width * 8,-2} " +
+               $"V=0x{VirtualAddress:X8} P=0x{PhysicalAddress:X8} " +
+               $"Value=0x{Value:X8} Region={Region}";
+    }
 }

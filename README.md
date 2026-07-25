@@ -70,7 +70,8 @@ O barramento implementa as seguintes regiões:
 | I/O Ports | `0x1F801000-0x1F801FFF` | Stub |
 | Expansion Region 2 | `0x1F802000-0x1F803FFF` | Stub |
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
-| Cache Control | `0xFFFE0000-0xFFFE01FF` | Parcial |
+| Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
+| Cache Control | `0xFFFE0130` | Registrador implementado |
 
 Escritas destinadas à cache isolada são impedidas de alterar a RAM principal,
 preservando o código carregado pela BIOS durante sua rotina de inicialização.
@@ -111,6 +112,30 @@ dotnet run --project SadPSX.Cli -- caminho\para\BIOS.BIN 1000 --trace
 
 Sem `--trace`, a CLI mantém um buffer e mostra apenas as últimas instruções ao
 final da execução.
+
+### Ferramentas de diagnóstico
+
+A CLI também oferece breakpoints, checkpoints, detecção simples de loops e
+relatórios de MMIO:
+
+```powershell
+dotnet run --project SadPSX.Cli -- caminho\para\BIOS.BIN 1000000 `
+  --checkpoint 0xBFC00000 `
+  --break-pc 0x80000080 `
+  --break-memory 0x1F801060 `
+  --loop-threshold 100000 `
+  --mmio-log `
+  --dump-registers
+```
+
+- `--break-pc` para antes de executar o endereço indicado.
+- `--break-memory` para depois de uma leitura ou escrita de dados.
+- `--checkpoint` registra o primeiro ciclo em que um PC é alcançado.
+- `--loop-threshold` para quando um mesmo PC é visitado muitas vezes.
+- `--mmio-log` mostra os primeiros acessos MMIO e um resumo por endereço.
+- `--dump-registers` imprime GPRs, `HI/LO`, PC e registradores do COP0.
+
+Os endereços podem ser informados em decimal ou hexadecimal com prefixo `0x`.
 
 ## Testes
 
@@ -163,8 +188,8 @@ O SadPSX ainda não possui:
 - Temporização precisa por componente.
 - Implementação completa da instruction cache.
 
-Os registradores MMIO ainda são stubs. Por isso, a BIOS pode entrar em loops ou
-receber valores diferentes dos apresentados pelo hardware real.
+Os periféricos MMIO ainda são stubs. Memory Control e Cache Control preservam
+seus valores, mas timings e efeitos completos ainda não são emulados.
 
 ## Próximos passos
 
@@ -172,9 +197,9 @@ Antes de adicionar novos periféricos, a prioridade é:
 
 1. Completar as instruções restantes do R3000A.
 2. Refinar o comportamento do COP0.
-3. Implementar corretamente memory control e cache control.
+3. Refinar timings e máscaras de memory control e cache control.
 4. Criar testes de conformidade com pequenos programas MIPS.
-5. Melhorar o diagnóstico de loops e acessos MMIO não tratados.
+5. Usar os novos diagnósticos para mapear os próximos acessos MMIO da BIOS.
 
 Depois dessa base, os próximos componentes naturais são controlador de
 interrupções, timers, DMA e uma implementação mínima da GPU.

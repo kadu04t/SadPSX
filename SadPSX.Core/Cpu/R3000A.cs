@@ -147,7 +147,7 @@ public sealed class R3000A
             {
                 try
                 {
-                    uint rawInstruction = _bus.Read32(Pc);
+                    uint rawInstruction = _bus.ReadInstruction32(Pc);
                     Execute(new Instruction(rawInstruction));
                 }
                 catch (InvalidOperationException)
