@@ -25,17 +25,23 @@ public sealed class Mmio
         InterruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
         RootCounters = new RootCounters(InterruptController);
+        Spu = new Spu();
+        Gpu = new Gpu(InterruptController);
         _devices =
         [
             MemoryControl,
             InterruptController,
             RootCounters,
+            Spu,
+            Gpu,
         ];
     }
 
     public MemoryControl MemoryControl { get; }
     public InterruptController InterruptController { get; }
     public RootCounters RootCounters { get; }
+    public Spu Spu { get; }
+    public Gpu Gpu { get; }
     public uint? LastUnhandledReadAddress { get; private set; }
     public uint? LastUnhandledWriteAddress { get; private set; }
     public int MaxLoggedAccesses { get; set; } = 256;

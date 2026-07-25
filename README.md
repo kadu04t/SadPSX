@@ -22,14 +22,17 @@ O SadPSX já consegue:
 - Processar exceções através do COP0.
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
+- Responder aos handshakes básicos da GPU e da SPU.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
 - Produzir traces com endereço, instrução crua e disassembly.
 - Validar uma execução da BIOS com métricas e critérios reproduzíveis.
 
-Na validação atual, a BIOS SCPH-1001 executa pelo menos 1.000.000 de
-instruções sem provocar uma exceção do runtime do .NET.
+Na validação atual, a BIOS SCPH-1001 executa pelo menos 20.000.000 de
+instruções sem exceções inesperadas, conclui os handshakes iniciais de SPU/GPU
+e alcança a configuração dos canais DMA. Isso ainda não representa um boot
+visual completo.
 
 ## Componentes implementados
 
@@ -84,6 +87,20 @@ Os três root counters implementam contador, modo e target em
 - Flags de target/overflow limpas após leitura.
 - Sincronização básica com sinais de HBlank/VBlank e dotclock.
 
+### GPU
+
+A interface inicial da GPU implementa os ports `GP0/GPUREAD` e `GP1/GPUSTAT`,
+estado de reset, bits de prontidão, direção de DMA, controle do display,
+registradores internos básicos, atributos de desenho e IRQ1. Comandos de
+rasterização e VRAM ainda não são processados.
+
+### SPU
+
+A camada inicial da SPU preserva os registradores MMIO, aplica o modo de
+`SPUCNT` em `SPUSTAT`, modela os requests de transferência e fornece RAM de som
+e FIFO para escritas manuais. Síntese de vozes e saída de áudio ainda não estão
+implementadas.
+
 ### Memória
 
 O barramento implementa as seguintes regiões:
@@ -94,12 +111,14 @@ O barramento implementa as seguintes regiões:
 | Espelhos da RAM | `0x00200000-0x007FFFFF` | Implementados |
 | Expansion Region 1 | `0x1F000000-0x1F7FFFFF` | Stub com leituras `0xFF` |
 | Scratchpad | `0x1F800000-0x1F8003FF` | Implementado |
-| I/O Ports | `0x1F801000-0x1F801FFF` | Stub |
+| I/O Ports | `0x1F801000-0x1F801FFF` | Parcial |
 | Expansion Region 2 | `0x1F802000-0x1F803FFF` | Stub |
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
+| GPU Ports | `0x1F801810-0x1F801817` | Interface inicial |
+| SPU Registers | `0x1F801C00-0x1F801DFF` | Interface inicial |
 | Cache Control | `0xFFFE0130` | Registrador implementado |
 
 Escritas destinadas à cache isolada são impedidas de alterar a RAM principal,
@@ -225,6 +244,8 @@ Os testes cobrem:
 - Contabilização de ciclos e sincronização de dispositivos.
 - Controlador de interrupções e entrega ao COP0.
 - Timers, targets, divisores e geração de IRQ.
+- Handshakes, comandos de controle e status da GPU.
+- Registradores, status, FIFO e RAM de som da SPU.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
@@ -251,25 +272,25 @@ SadPSX/
 
 O SadPSX ainda não possui:
 
-- GPU e saída de vídeo.
+- Rasterização da GPU, VRAM funcional e saída de vídeo.
 - DMA.
 - GTE/COP2.
 - CD-ROM e carregamento de jogos.
-- SPU e saída de áudio.
+- Síntese da SPU e saída de áudio.
 - MDEC.
 - Controles e memory cards.
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 
 Os demais periféricos MMIO ainda são stubs. Os clocks de dotclock, HBlank e
-VBlank já possuem pontos de integração nos timers, mas dependerão da futura GPU
-para avançar com a temporização real do vídeo.
+VBlank já possuem pontos de integração nos timers, mas ainda dependem do
+gerador de timing de vídeo.
 
 ## Próximos passos
 
-Os próximos componentes naturais são DMA e uma implementação mínima da GPU.
-Depois deles, CD-ROM, controles/memory cards e SPU poderão avançar sobre uma
-base de interrupções e temporização já funcional.
+Os próximos componentes naturais são DMA2/DMA6, timing de vídeo e VRAM com
+comandos gráficos básicos. Depois deles, CD-ROM, controles/memory cards e
+síntese da SPU poderão avançar sobre uma base de interrupções já funcional.
 
 ## Licença
 
