@@ -46,6 +46,8 @@ public sealed class R3000A
     /// </summary>
     public uint LastStepCycles { get; private set; }
 
+    public event Action<CpuExceptionInfo>? ExceptionOccurred;
+
     // Suporte a branch delay slot: quando um branch/jump é tomado, o desvio
     // não acontece imediatamente. A instrução seguinte (o "delay slot")
     // sempre executa primeiro, e só depois o PC pula para o alvo agendado.
@@ -251,7 +253,9 @@ public sealed class R3000A
         // reexecutar o branch e reconstituir corretamente o delay slot.
         uint epc = _executingInBranchDelaySlot ? unchecked(Pc - 4) : Pc;
 
-        Cop0.RaiseException(code, epc, _executingInBranchDelaySlot);
+        uint faultingPc = Pc;
+        bool inBranchDelaySlot = _executingInBranchDelaySlot;
+        Cop0.RaiseException(code, epc, inBranchDelaySlot);
 
         bool useRomVector = (Cop0.Sr & StatusBootExceptionVectorsBit) != 0;
         uint vector = useRomVector ? ExceptionVectorRom : ExceptionVectorRam;
@@ -265,6 +269,11 @@ public sealed class R3000A
         NextPc = unchecked(vector + 4);
 
         _exceptionRaised = true;
+        ExceptionOccurred?.Invoke(new CpuExceptionInfo(
+            code,
+            faultingPc,
+            epc,
+            inBranchDelaySlot));
     }
 
     private void RaiseAddressException(ExceptionCode code, uint badVirtualAddress)
@@ -1252,3 +1261,9 @@ public sealed class R3000A
         return (int)(GetRegister(registerIndex) & 0x1F);
     }
 }
+
+public readonly record struct CpuExceptionInfo(
+    ExceptionCode Code,
+    uint FaultingPc,
+    uint Epc,
+    bool InBranchDelaySlot);

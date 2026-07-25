@@ -24,6 +24,7 @@ O SadPSX já consegue:
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
 - Produzir traces com endereço, instrução crua e disassembly.
+- Validar uma execução da BIOS com métricas e critérios reproduzíveis.
 
 Na validação atual, a BIOS SCPH-1001 executa pelo menos 1.000.000 de
 instruções sem provocar uma exceção do runtime do .NET.
@@ -150,8 +151,34 @@ dotnet run --project SadPSX.Cli -- caminho\para\BIOS.BIN 1000000 `
 - `--loop-threshold` para quando um mesmo PC é visitado muitas vezes.
 - `--mmio-log` mostra os primeiros acessos MMIO e um resumo por endereço.
 - `--dump-registers` imprime GPRs, `HI/LO`, PC e registradores do COP0.
+- `--validate` executa um smoke test e resume clocks, PCs, MMIO e exceções.
 
 Os endereços podem ser informados em decimal ou hexadecimal com prefixo `0x`.
+
+### Validação automatizada
+
+Para compilar, executar todos os testes e validar um milhão de instruções da
+BIOS em um único comando:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\validate.ps1
+```
+
+Também é possível escolher outra imagem e quantidade de instruções:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\validate.ps1 `
+  -BiosPath C:\bios\SCPH1001.BIN `
+  -Instructions 2000000
+```
+
+Use `-NoRestore` quando os pacotes já estiverem disponíveis e a máquina estiver
+offline.
+
+O relatório é aprovado quando a quantidade solicitada é concluída sem falha do
+runtime e sem instrução reservada, coprocessador inutilizável ou erro de
+barramento. Syscalls e outras exceções emuladas continuam sendo contabilizadas,
+mas não são consideradas automaticamente uma falha.
 
 ## Testes
 
@@ -176,6 +203,8 @@ Os testes cobrem:
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
 - Integração entre CPU, barramento e máquina.
+- Programas MIPS completos na suíte de conformidade.
+- Relatórios de validação com sucesso, exceções, MMIO e falhas do host.
 
 ## Estrutura do projeto
 
@@ -188,6 +217,7 @@ SadPSX/
 │   └── PsxMachine.cs
 ├── SadPSX.Cli/       # Executor de BIOS por linha de comando
 ├── SadPSX.Tests/     # Testes unitários e de integração
+├── scripts/          # Validação automatizada
 └── SadPSX.slnx
 ```
 

@@ -1,5 +1,6 @@
 using System.Globalization;
 using SadPSX.Core;
+using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
 using SadPSX.Core.Memory;
 
@@ -14,6 +15,7 @@ ulong stepCount = 100;
 bool trace = false;
 bool showMmioLog = false;
 bool dumpRegisters = false;
+bool validate = false;
 int? loopThreshold = null;
 var pcBreakpoints = new HashSet<uint>();
 var memoryBreakpoints = new HashSet<uint>();
@@ -46,6 +48,10 @@ try
 
             case "--dump-registers":
                 dumpRegisters = true;
+                break;
+
+            case "--validate":
+                validate = true;
                 break;
 
             case "--break-pc":
@@ -107,6 +113,13 @@ Console.WriteLine($"BIOS carregada: {biosPath}");
 Console.WriteLine($"PC inicial: 0x{machine.Cpu.Pc:X8}");
 Console.WriteLine($"Executando até {stepCount} instruções{(trace ? " (com trace)" : "")}...");
 Console.WriteLine();
+
+if (validate)
+{
+    BiosValidationResult result = BiosValidator.Run(machine, stepCount);
+    PrintValidationResult(result);
+    return result.Succeeded ? 0 : 1;
+}
 
 var tracer = new TraceLogger(machine)
 {
@@ -231,6 +244,44 @@ static void PrintMmioLog(Mmio mmio)
     }
 }
 
+static void PrintValidationResult(BiosValidationResult result)
+{
+    Console.WriteLine(
+        $"Validação da BIOS: {(result.Succeeded ? "APROVADA" : "REPROVADA")}");
+    Console.WriteLine(
+        $"Instruções: {result.ExecutedInstructions}/{result.RequestedInstructions}");
+    Console.WriteLine($"Ciclos de clock: {result.ElapsedClockCycles}");
+    Console.WriteLine(
+        $"PC: 0x{result.InitialPc:X8} -> 0x{result.FinalPc:X8}");
+    Console.WriteLine($"PCs únicos: {result.UniqueProgramCounters}");
+    Console.WriteLine(
+        $"MMIO: {result.MmioAccesses} acessos, " +
+        $"{result.UnhandledMmioAccesses} não tratados");
+
+    Console.WriteLine("Exceções emuladas:");
+    if (result.ExceptionCounts.Count == 0)
+    {
+        Console.WriteLine("  nenhuma");
+    }
+    else
+    {
+        foreach ((ExceptionCode code, ulong count) in result.ExceptionCounts
+            .OrderBy(entry => entry.Key))
+        {
+            Console.WriteLine($"  {code}: {count}");
+        }
+    }
+
+    Console.WriteLine(
+        $"Exceções inesperadas: {result.UnexpectedExceptionCount}");
+
+    if (result.FailureType is not null)
+    {
+        Console.WriteLine(
+            $"Falha do host: {result.FailureType}: {result.FailureMessage}");
+    }
+}
+
 static void PrintUsage()
 {
     Console.WriteLine(
@@ -240,6 +291,7 @@ static void PrintUsage()
     Console.WriteLine("  --trace                 Imprime cada instrução executada");
     Console.WriteLine("  --mmio-log              Mostra primeiros acessos e resumo MMIO");
     Console.WriteLine("  --dump-registers        Mostra os registradores ao finalizar");
+    Console.WriteLine("  --validate              Executa e resume uma validação da BIOS");
     Console.WriteLine("  --break-pc <endereço>   Para antes de executar o PC informado");
     Console.WriteLine("  --break-memory <addr>   Para após acessar o endereço informado");
     Console.WriteLine("  --checkpoint <endereço> Registra ciclo e MMIO ao alcançar o PC");
