@@ -44,4 +44,4 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
-Bios/
+/Bios/

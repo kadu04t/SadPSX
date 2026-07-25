@@ -1,27 +1,28 @@
 using SadPSX.Core.Memory;
 using Xunit;
+using GpuDevice = SadPSX.Core.Memory.Gpu;
 
-namespace SadPSX.Tests.Memory;
+namespace SadPSX.Tests.Gpu;
 
 public sealed class GpuTests
 {
     [Fact]
     public void ResetStatusMatchesGpuResetState()
     {
-        var gpu = new Gpu(new InterruptController());
+        var gpu = new GpuDevice(new InterruptController());
 
-        Assert.Equal(Gpu.ResetStatus, gpu.Status);
+        Assert.Equal(GpuDevice.ResetStatus, gpu.Status);
     }
 
     [Fact]
     public void DisplayEnableCommandUpdatesStatus()
     {
-        var gpu = new Gpu(new InterruptController());
+        var gpu = new GpuDevice(new InterruptController());
 
-        gpu.Write32(Gpu.GpuStatusAddress, 0x0300_0000);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0300_0000);
         Assert.Equal(0u, gpu.Status & (1u << 23));
 
-        gpu.Write32(Gpu.GpuStatusAddress, 0x0300_0001);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0300_0001);
 
         Assert.NotEqual(0u, gpu.Status & (1u << 23));
     }
@@ -29,9 +30,9 @@ public sealed class GpuTests
     [Fact]
     public void DmaDirectionUpdatesDirectionAndRequestBits()
     {
-        var gpu = new Gpu(new InterruptController());
+        var gpu = new GpuDevice(new InterruptController());
 
-        gpu.Write32(Gpu.GpuStatusAddress, 0x0400_0002);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
 
         Assert.Equal(2u, (gpu.Status >> 29) & 3);
         Assert.NotEqual(0u, gpu.Status & (1u << 25));
@@ -40,10 +41,10 @@ public sealed class GpuTests
     [Fact]
     public void DrawModeAndMaskCommandsUpdateStatus()
     {
-        var gpu = new Gpu(new InterruptController());
+        var gpu = new GpuDevice(new InterruptController());
 
-        gpu.Write32(Gpu.Gp0Address, 0xE100_0355);
-        gpu.Write32(Gpu.Gp0Address, 0xE600_0003);
+        gpu.Write32(GpuDevice.Gp0Address, 0xE100_0355);
+        gpu.Write32(GpuDevice.Gp0Address, 0xE600_0003);
 
         Assert.Equal(0x355u, gpu.Status & 0x7FF);
         Assert.Equal(3u, (gpu.Status >> 11) & 3);
@@ -53,16 +54,16 @@ public sealed class GpuTests
     public void GpuInterruptSetsGpuStatAndInterruptController()
     {
         var interrupts = new InterruptController();
-        var gpu = new Gpu(interrupts);
+        var gpu = new GpuDevice(interrupts);
 
-        gpu.Write32(Gpu.Gp0Address, 0x1F00_0000);
+        gpu.Write32(GpuDevice.Gp0Address, 0x1F00_0000);
 
         Assert.NotEqual(0u, gpu.Status & (1u << 24));
         Assert.NotEqual(
             0,
             interrupts.Status & (1 << (int)InterruptSource.Gpu));
 
-        gpu.Write32(Gpu.GpuStatusAddress, 0x0200_0000);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0200_0000);
 
         Assert.Equal(0u, gpu.Status & (1u << 24));
         Assert.NotEqual(
@@ -73,10 +74,10 @@ public sealed class GpuTests
     [Fact]
     public void InternalVersionRegisterCanBeReadThroughGpuRead()
     {
-        var gpu = new Gpu(new InterruptController());
-        gpu.Write32(Gpu.GpuStatusAddress, 0x1000_0007);
+        var gpu = new GpuDevice(new InterruptController());
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x1000_0007);
 
-        uint version = gpu.Read32(Gpu.Gp0Address);
+        uint version = gpu.Read32(GpuDevice.Gp0Address);
 
         Assert.Equal(2u, version);
     }
@@ -84,9 +85,9 @@ public sealed class GpuTests
     [Fact]
     public void DisplayModeUpdatesResolutionAndVideoBits()
     {
-        var gpu = new Gpu(new InterruptController());
+        var gpu = new GpuDevice(new InterruptController());
 
-        gpu.Write32(Gpu.GpuStatusAddress, 0x0800_003D);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0800_003D);
 
         Assert.Equal(1u, (gpu.Status >> 17) & 3);
         Assert.NotEqual(0u, gpu.Status & (1u << 19));
@@ -101,8 +102,8 @@ public sealed class GpuTests
     {
         var bus = new Bus();
 
-        bus.Write32(Gpu.Gp0Address, 0xE100_1000);
-        bus.Read32(Gpu.GpuStatusAddress);
+        bus.Write32(GpuDevice.Gp0Address, 0xE100_1000);
+        bus.Read32(GpuDevice.GpuStatusAddress);
 
         Assert.All(
             bus.Mmio.AccessSummaries,

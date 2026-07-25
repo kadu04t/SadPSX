@@ -259,11 +259,24 @@ Os testes cobrem:
 SadPSX/
 ├── SadPSX.Core/
 │   ├── Cpu/          # R3000A, COP0 e decodificação
-│   ├── Memory/       # Barramento e regiões de memória
-│   ├── Debugging/    # Disassembler e trace logger
+│   ├── Gpu/          # Interface e estado da GPU
+│   ├── Memory/       # RAM, scratchpad e regiões de memória
+│   ├── Bus/          # Barramento e roteamento MMIO
+│   ├── Bios/         # ROM e carregamento da BIOS
+│   ├── CdRom/        # Subsistema de CD-ROM
+│   ├── Dma/          # Canais e controle de DMA
+│   ├── Timers/       # Root counters
+│   ├── Interrupts/   # I_STAT, I_MASK e fontes de IRQ
+│   ├── Spu/          # Interface e RAM de som
+│   ├── Controllers/  # Controles e memory cards
+│   ├── Debugging/    # Disassembler, debugger e validação
 │   └── PsxMachine.cs
 ├── SadPSX.Cli/       # Executor de BIOS por linha de comando
-├── SadPSX.Tests/     # Testes unitários e de integração
+├── SadPSX.Tests/
+│   ├── Cpu/          # Testes da CPU
+│   ├── Memory/       # Testes de memória e MMIO
+│   ├── Gpu/          # Testes da GPU
+│   └── Dma/          # Testes de DMA
 ├── scripts/          # Validação automatizada
 └── SadPSX.slnx
 ```
