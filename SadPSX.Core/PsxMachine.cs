@@ -16,8 +16,11 @@ namespace SadPSX.Core;
 /// </summary>
 public sealed class PsxMachine
 {
+    private readonly List<IClockedDevice> _clockedDevices = new();
+
     public Bus Bus { get; }
     public R3000A Cpu { get; }
+    public ulong ClockCycles => Cpu.ClockCycles;
 
     public PsxMachine()
     {
@@ -53,27 +56,38 @@ public sealed class PsxMachine
     }
 
     /// <summary>
-    /// Executa um único ciclo de busca+execução (equivalente a
+    /// Executa uma única instrução, incluindo busca e execução (equivalente a
     /// <see cref="R3000A.Step"/>).
     /// </summary>
     public void Step()
     {
         Cpu.Step();
+
+        foreach (IClockedDevice device in _clockedDevices)
+            device.Tick(Cpu.LastStepCycles);
+    }
+
+    public void RegisterClockedDevice(IClockedDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+
+        if (!_clockedDevices.Contains(device))
+            _clockedDevices.Add(device);
     }
 
     /// <summary>
-    /// Executa exatamente <paramref name="stepCount"/> ciclos de CPU em
+    /// Executa exatamente <paramref name="stepCount"/> instruções da CPU em
     /// sequência. Útil para testes e depuração, onde rodar indefinidamente
     /// não é prático.
     /// </summary>
     public void Run(ulong stepCount)
     {
         for (ulong i = 0; i < stepCount; i++)
-            Cpu.Step();
+            Step();
     }
 
     /// <summary>
-    /// Executa ciclos de CPU até que <paramref name="stopCondition"/> retorne
+    /// Executa instruções até que <paramref name="stopCondition"/> retorne
     /// verdadeiro (avaliado após cada Step), ou até
     /// <paramref name="maxSteps"/> ciclos serem executados — o que ocorrer
     /// primeiro. Retorna verdadeiro se a condição de parada foi atingida, e
@@ -86,7 +100,7 @@ public sealed class PsxMachine
 
         for (ulong i = 0; i < maxSteps; i++)
         {
-            Cpu.Step();
+            Step();
 
             if (stopCondition(this))
                 return true;
@@ -98,7 +112,7 @@ public sealed class PsxMachine
     /// <summary>
     /// Reinicia a CPU para o vetor de reset padrão (0xBFC0_0000). O conteúdo
     /// da RAM, scratchpad e BIOS não é apagado — apenas o estado da CPU
-    /// (registradores, Pc/NextPc, Hi/Lo, COP0, contador de ciclos) volta ao
+    /// (registradores, Pc/NextPc, Hi/Lo, COP0 e contadores) volta ao
     /// estado inicial, replicando o comportamento de um reset de hardware.
     /// </summary>
     public void Reset()

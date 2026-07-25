@@ -18,8 +18,11 @@ O SadPSX já consegue:
 - Tratar Expansion Region 1 como barramento flutuante.
 - Executar branch e jump delay slots.
 - Aplicar load delay em loads e `MFC0`.
+- Executar `LWL`, `LWR`, `SWL` e `SWR`.
 - Processar exceções através do COP0.
 - Detectar overflow, acessos desalinhados e erros de barramento.
+- Bloquear acessos de usuário aos segmentos do kernel.
+- Contabilizar custos aproximados de acesso à memória.
 - Produzir traces com endereço, instrução crua e disassembly.
 
 Na validação atual, a BIOS SCPH-1001 executa pelo menos 1.000.000 de
@@ -37,25 +40,26 @@ A implementação interpretada do R3000A inclui:
 - Multiplicação e divisão com comportamento especial do hardware.
 - Branches condicionais.
 - `J`, `JAL`, `JR` e `JALR`.
-- Loads e stores básicos.
+- Loads e stores, incluindo acessos desalinhados com `LWL/LWR/SWL/SWR`.
 - Branch delay e load delay.
 - Registradores `HI`, `LO` e `$zero`.
 
-Algumas instruções ainda não estão implementadas, incluindo `LWL`, `LWR`,
-`SWL`, `SWR` e as operações do GTE.
+As principais instruções ainda não implementadas são as operações do GTE/COP2.
 
 ### COP0
 
 O COP0 atualmente possui:
 
-- Registradores `SR`, `CAUSE`, `EPC` e `BadVaddr`.
+- Registradores de controle, debug e identificação do processador.
 - Exceções de syscall, breakpoint e overflow.
 - Exceções de endereço e barramento.
 - Exceção de instrução reservada.
 - Identificação de exceções em branch delay slots.
 - Seleção dos vetores de exceção por `SR.BEV`.
 - Implementação de `MFC0`, `MTC0` e `RFE`.
-- Reset completo dos registradores.
+- Permissões de leitura e escrita específicas por registrador.
+- `PRID` compatível com o R3000A do PlayStation.
+- Reset do estado gravável e restauração dos valores fixos.
 
 ### Memória
 
@@ -75,6 +79,18 @@ O barramento implementa as seguintes regiões:
 
 Escritas destinadas à cache isolada são impedidas de alterar a RAM principal,
 preservando o código carregado pela BIOS durante sua rotina de inicialização.
+
+### Temporização
+
+`Cycles` continua representando a quantidade de instruções executadas.
+`ClockCycles` contabiliza um custo aproximado de clock para instruction fetch,
+loads e stores, diferenciando RAM em cache, RAM sem cache, scratchpad, MMIO,
+Expansion 1 e BIOS.
+
+Dispositivos futuros podem implementar `IClockedDevice` e ser registrados na
+`PsxMachine`; eles recebem os ciclos decorridos após cada instrução. Este modelo
+é uma base de escalonamento e ainda não representa contenção de barramento,
+instruction cache completa ou timings internos de todas as instruções.
 
 ## Requisitos
 
@@ -152,7 +168,10 @@ Os testes cobrem:
 - Branches, jumps e delay slots.
 - Multiplicação e divisão.
 - Loads, stores e load delay.
+- Loads e stores desalinhados em todos os offsets.
 - Exceções e registradores do COP0.
+- Proteção entre modo usuário e segmentos do kernel.
+- Contabilização de ciclos e sincronização de dispositivos.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
@@ -185,7 +204,7 @@ O SadPSX ainda não possui:
 - SPU e saída de áudio.
 - MDEC.
 - Controles e memory cards.
-- Temporização precisa por componente.
+- Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 
 Os periféricos MMIO ainda são stubs. Memory Control e Cache Control preservam
@@ -193,13 +212,11 @@ seus valores, mas timings e efeitos completos ainda não são emulados.
 
 ## Próximos passos
 
-Antes de adicionar novos periféricos, a prioridade é:
+Antes de adicionar periféricos complexos, a prioridade é:
 
-1. Completar as instruções restantes do R3000A.
-2. Refinar o comportamento do COP0.
-3. Refinar timings e máscaras de memory control e cache control.
-4. Criar testes de conformidade com pequenos programas MIPS.
-5. Usar os novos diagnósticos para mapear os próximos acessos MMIO da BIOS.
+1. Ampliar testes de conformidade com pequenos programas MIPS.
+2. Refinar timings internos da CPU, cache e memory control.
+3. Usar os diagnósticos para mapear os próximos acessos MMIO da BIOS.
 
 Depois dessa base, os próximos componentes naturais são controlador de
 interrupções, timers, DMA e uma implementação mínima da GPU.

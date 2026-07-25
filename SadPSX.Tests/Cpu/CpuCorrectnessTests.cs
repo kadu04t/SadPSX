@@ -183,7 +183,7 @@ public sealed class CpuCorrectnessTests
     }
 
     [Fact]
-    public void ResetClearsEveryCop0Register()
+    public void ResetClearsWritableCop0StateAndRestoresProcessorId()
     {
         var cpu = new R3000A();
 
@@ -194,6 +194,7 @@ public sealed class CpuCorrectnessTests
 
         Assert.Equal(0u, cpu.Cop0.GetRegister(3));
         Assert.Equal(0u, cpu.Cop0.BadVaddr);
+        Assert.Equal(2u, cpu.Cop0.GetRegister(15));
     }
 
     [Fact]

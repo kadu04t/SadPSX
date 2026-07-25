@@ -126,7 +126,8 @@ public sealed class ExecutionDebugger : IDisposable
 
         output.AppendLine(
             $"PC=0x{cpu.Pc:X8} NextPC=0x{cpu.NextPc:X8} " +
-            $"HI=0x{cpu.Hi:X8} LO=0x{cpu.Lo:X8} Cycles={cpu.Cycles}");
+            $"HI=0x{cpu.Hi:X8} LO=0x{cpu.Lo:X8} " +
+            $"Instructions={cpu.Cycles} Clock={cpu.ClockCycles}");
 
         for (int index = 0; index < RegisterNames.Length; index += 4)
         {
@@ -170,12 +171,14 @@ public sealed class ExecutionDebugger : IDisposable
         var checkpoint = new ExecutionCheckpoint(
             pc,
             _machine.Cpu.Cycles,
+            _machine.Cpu.ClockCycles,
             _machine.Bus.Mmio.TotalAccessCount);
 
         ReachedCheckpoints.Add(checkpoint);
         Output?.WriteLine(
             $"[checkpoint] PC=0x{checkpoint.Pc:X8} " +
-            $"ciclo={checkpoint.Cycle} mmio={checkpoint.MmioAccessCount}");
+            $"instrução={checkpoint.Cycle} clock={checkpoint.ClockCycle} " +
+            $"mmio={checkpoint.MmioAccessCount}");
     }
 
     private void OnMemoryAccessed(MemoryAccess access)
@@ -203,6 +206,7 @@ public sealed class ExecutionDebugger : IDisposable
             message,
             _machine.Cpu.Pc,
             _machine.Cpu.Cycles,
+            _machine.Cpu.ClockCycles,
             memoryAccess);
 
         if (Output is null)
@@ -230,9 +234,11 @@ public readonly record struct DebuggerStop(
     string Message,
     uint Pc,
     ulong Cycle,
+    ulong ClockCycle,
     MemoryAccess? MemoryAccess);
 
 public readonly record struct ExecutionCheckpoint(
     uint Pc,
     ulong Cycle,
+    ulong ClockCycle,
     ulong MmioAccessCount);

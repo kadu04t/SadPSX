@@ -139,7 +139,8 @@ catch (Exception exception)
 Console.WriteLine();
 Console.WriteLine($"Instruções executadas: {executed}");
 Console.WriteLine($"PC final: 0x{machine.Cpu.Pc:X8}");
-Console.WriteLine($"Ciclos: {machine.Cpu.Cycles}");
+Console.WriteLine($"Instruções: {machine.Cpu.Cycles}");
+Console.WriteLine($"Ciclos de clock: {machine.Cpu.ClockCycles}");
 
 if (debugger.StopReason is DebuggerStop stop)
 {

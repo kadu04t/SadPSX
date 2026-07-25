@@ -18,6 +18,9 @@ public sealed class Cop0
     private const int StatusIndex = 12;
     private const int CauseIndex = 13;
     private const int EpcIndex = 14;
+    private const int ProcessorIdIndex = 15;
+    private const uint ProcessorId = 0x0000_0002;
+    private const uint CauseSoftwareInterruptMask = 0x0000_0300;
 
     private readonly uint[] _registers = new uint[RegisterCount];
 
@@ -74,10 +77,66 @@ public sealed class Cop0
         _registers[index] = value;
     }
 
+    public bool TryReadRegister(int index, out uint value)
+    {
+        ValidateRegisterIndex(index);
+
+        if (IsUnavailableRegister(index))
+        {
+            value = 0;
+            return false;
+        }
+
+        value = _registers[index];
+        return true;
+    }
+
+    public bool TryWriteRegister(int index, uint value)
+    {
+        ValidateRegisterIndex(index);
+
+        if (IsUnavailableRegister(index))
+            return false;
+
+        switch (index)
+        {
+            case 3:
+            case 5:
+            case 7:
+            case 9:
+            case 11:
+            case StatusIndex:
+                _registers[index] = value;
+                break;
+
+            case CauseIndex:
+                _registers[index] =
+                    (_registers[index] & ~CauseSoftwareInterruptMask) |
+                    (value & CauseSoftwareInterruptMask);
+                break;
+
+            case 6:
+            case BadVaddrIndex:
+            case EpcIndex:
+            case ProcessorIdIndex:
+                break;
+
+            default:
+                _registers[index] = value;
+                break;
+        }
+
+        return true;
+    }
+
     public void Reset()
     {
         Array.Clear(_registers);
+        _registers[ProcessorIdIndex] = ProcessorId;
     }
+
+    private static bool IsUnavailableRegister(int index) =>
+        index is 0 or 1 or 2 or 4 or 10;
 
     private static void ValidateRegisterIndex(int index)
     {

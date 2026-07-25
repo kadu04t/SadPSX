@@ -1,3 +1,4 @@
+using SadPSX.Core;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Memory;
 using Xunit;
@@ -76,6 +77,43 @@ public sealed class StepTests
         Assert.Equal(
             2ul,
             cpu.Cycles);
+    }
+
+    [Fact]
+    public void CachedRamInstructionCostsOneClockCycle()
+    {
+        var (bus, cpu) = CreateCpu(TestProgramAddress);
+        bus.Write32(TestProgramAddress, 0x0000_0000);
+
+        cpu.Step();
+
+        Assert.Equal(1u, cpu.LastStepCycles);
+        Assert.Equal(1ul, cpu.ClockCycles);
+    }
+
+    [Fact]
+    public void BiosInstructionFetchIsSlowerThanCachedRam()
+    {
+        var machine = new PsxMachine();
+        machine.LoadBios(new byte[BiosRom.SizeInBytes]);
+
+        machine.Step();
+
+        Assert.Equal(29u, machine.Cpu.LastStepCycles);
+        Assert.Equal(29ul, machine.ClockCycles);
+    }
+
+    [Fact]
+    public void DataLoadAddsMemoryLatencyToInstructionFetch()
+    {
+        var (bus, cpu) = CreateCpu(TestProgramAddress);
+        bus.Write32(TestProgramAddress, 0x8C08_0100); // lw $t0, 0x100($zero)
+        bus.Write32(0x100, 0xDEAD_BEEF);
+
+        cpu.Step();
+
+        Assert.Equal(8u, cpu.LastStepCycles);
+        Assert.Equal(8ul, cpu.ClockCycles);
     }
 
     [Fact]
@@ -216,6 +254,14 @@ public sealed class StepTests
         Assert.Equal(
             0ul,
             cpu.Cycles);
+
+        Assert.Equal(
+            0ul,
+            cpu.ClockCycles);
+
+        Assert.Equal(
+            0u,
+            cpu.LastStepCycles);
     }
 
     [Fact]

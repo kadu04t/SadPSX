@@ -204,6 +204,28 @@ public sealed class Bus
         NotifyAccess(address, segment, region, MemoryAccessKind.Write, 4, value);
     }
 
+    public uint EstimateAccessCycles(uint address, MemoryAccessKind kind)
+    {
+        var (region, _) = Route(address, out MemorySegment segment);
+
+        if (kind == MemoryAccessKind.Write)
+            return 1;
+
+        return region switch
+        {
+            MemoryRegion.Ram
+                when kind == MemoryAccessKind.InstructionFetch &&
+                     segment is MemorySegment.Kuseg or MemorySegment.Kseg0 => 1,
+            MemoryRegion.Ram => 7,
+            MemoryRegion.Scratchpad => 1,
+            MemoryRegion.Mmio => 5,
+            MemoryRegion.Bios => 29,
+            MemoryRegion.Expansion1 => 5,
+            MemoryRegion.CacheControl => 5,
+            _ => 1,
+        };
+    }
+
     private void NotifyAccess(
         uint virtualAddress,
         MemorySegment segment,

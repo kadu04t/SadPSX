@@ -33,11 +33,18 @@ public sealed class R3000A
 
     /// <summary>
     /// Quantidade de instruções processadas através de Step().
-    ///
-    /// Por enquanto cada Step representa um ciclo lógico.
-    /// A temporização real será refinada futuramente.
     /// </summary>
     public ulong Cycles { get; private set; }
+
+    /// <summary>
+    /// Quantidade aproximada de ciclos de clock decorridos.
+    /// </summary>
+    public ulong ClockCycles { get; private set; }
+
+    /// <summary>
+    /// Custo aproximado do Step mais recente.
+    /// </summary>
+    public uint LastStepCycles { get; private set; }
 
     // Suporte a branch delay slot: quando um branch/jump é tomado, o desvio
     // não acontece imediatamente. A instrução seguinte (o "delay slot")
@@ -54,7 +61,10 @@ public sealed class R3000A
     private bool _isStepping;
     private int _pendingLoadRegister = -1;
     private uint _pendingLoadValue;
+    private int _loadDelayRegisterThisStep = -1;
+    private uint _loadDelayValueThisStep;
     private int _writtenRegisterThisStep = -1;
+    private uint _currentStepCycles;
 
     public Cop0 Cop0 { get; } = new();
 
@@ -90,6 +100,8 @@ public sealed class R3000A
         Hi = 0;
         Lo = 0;
         Cycles = 0;
+        ClockCycles = 0;
+        LastStepCycles = 0;
 
         _branchPending = false;
         _branchTarget = 0;
@@ -98,7 +110,10 @@ public sealed class R3000A
         _isStepping = false;
         _pendingLoadRegister = -1;
         _pendingLoadValue = 0;
+        _loadDelayRegisterThisStep = -1;
+        _loadDelayValueThisStep = 0;
         _writtenRegisterThisStep = -1;
+        _currentStepCycles = 0;
 
         Cop0.Reset();
     }
@@ -121,6 +136,10 @@ public sealed class R3000A
     /// </summary>
     public void Step()
     {
+        _currentStepCycles = _bus.EstimateAccessCycles(
+            Pc,
+            MemoryAccessKind.InstructionFetch);
+
         bool applyPendingBranchAfterThisStep = _branchPending;
         uint pendingTarget = _branchTarget;
         _branchPending = false;
@@ -133,13 +152,19 @@ public sealed class R3000A
 
         int loadRegisterToCommit = _pendingLoadRegister;
         uint loadValueToCommit = _pendingLoadValue;
+        _loadDelayRegisterThisStep = loadRegisterToCommit;
+        _loadDelayValueThisStep = loadValueToCommit;
         _pendingLoadRegister = -1;
         _pendingLoadValue = 0;
 
         _isStepping = true;
         try
         {
-            if ((Pc & 0x03) != 0)
+            if (IsUserModeAddressViolation(Pc))
+            {
+                RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
+            }
+            else if ((Pc & 0x03) != 0)
             {
                 RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
             }
@@ -180,7 +205,11 @@ public sealed class R3000A
 
         // Proteção adicional da propriedade arquitetural do registrador $zero.
         _registers[0] = 0;
+        _loadDelayRegisterThisStep = -1;
+        _loadDelayValueThisStep = 0;
 
+        LastStepCycles = Math.Max(1u, _currentStepCycles);
+        ClockCycles = unchecked(ClockCycles + LastStepCycles);
         Cycles = unchecked(Cycles + 1);
     }
 
@@ -282,6 +311,14 @@ public sealed class R3000A
         _pendingLoadValue = value;
     }
 
+    private uint GetLoadMergeValue(int register)
+    {
+        if (_isStepping && _loadDelayRegisterThisStep == register)
+            return _loadDelayValueThisStep;
+
+        return GetRegister(register);
+    }
+
     private static void ValidateRegisterIndex(int index)
     {
         if ((uint)index >= RegisterCount)
@@ -355,6 +392,10 @@ public sealed class R3000A
                 ExecuteLh(instruction);
                 break;
 
+            case 0x22: // LWL rt, offset(rs)
+                ExecuteLwl(instruction);
+                break;
+
             case 0x23: // LW rt, offset(rs)
                 ExecuteLw(instruction);
                 break;
@@ -367,6 +408,10 @@ public sealed class R3000A
                 ExecuteLhu(instruction);
                 break;
 
+            case 0x26: // LWR rt, offset(rs)
+                ExecuteLwr(instruction);
+                break;
+
             case 0x28: // SB rt, offset(rs)
                 ExecuteSb(instruction);
                 break;
@@ -375,8 +420,16 @@ public sealed class R3000A
                 ExecuteSh(instruction);
                 break;
 
+            case 0x2A: // SWL rt, offset(rs)
+                ExecuteSwl(instruction);
+                break;
+
             case 0x2B: // SW rt, offset(rs)
                 ExecuteSw(instruction);
+                break;
+
+            case 0x2E: // SWR rt, offset(rs)
+                ExecuteSwr(instruction);
                 break;
 
             case 0x04: // BEQ rs, rt, offset
@@ -431,11 +484,15 @@ public sealed class R3000A
         switch (instruction.Rs)
         {
             case 0x00: // MFC0 rt, rd  (rd aqui é o registrador COP0 de origem)
-                LoadRegister(instruction.Rt, Cop0.GetRegister(instruction.Rd));
+                if (Cop0.TryReadRegister(instruction.Rd, out uint value))
+                    LoadRegister(instruction.Rt, value);
+                else
+                    RaiseException(ExceptionCode.ReservedInstruction);
                 break;
 
             case 0x04: // MTC0 rt, rd  (rd aqui é o registrador COP0 de destino)
-                Cop0.SetRegister(instruction.Rd, GetRegister(instruction.Rt));
+                if (!Cop0.TryWriteRegister(instruction.Rd, GetRegister(instruction.Rt)))
+                    RaiseException(ExceptionCode.ReservedInstruction);
                 break;
 
             case 0x10: // RFE (Return From Exception): identificado por
@@ -585,6 +642,11 @@ public sealed class R3000A
     {
         uint address = GetEffectiveAddress(instruction);
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
+
         try
         {
             sbyte value = unchecked((sbyte)_bus.Read8(address));
@@ -599,6 +661,11 @@ public sealed class R3000A
     private void ExecuteLbu(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
 
         try
         {
@@ -615,11 +682,16 @@ public sealed class R3000A
     {
         uint address = GetEffectiveAddress(instruction);
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
         if ((address & 0x01) != 0)
         {
             RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
             return;
         }
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
 
         try
         {
@@ -636,11 +708,16 @@ public sealed class R3000A
     {
         uint address = GetEffectiveAddress(instruction);
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
         if ((address & 0x01) != 0)
         {
             RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
             return;
         }
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
 
         try
         {
@@ -657,15 +734,78 @@ public sealed class R3000A
     {
         uint address = GetEffectiveAddress(instruction);
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
         if ((address & 0x03) != 0)
         {
             RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
             return;
         }
 
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
+
         try
         {
             uint value = _bus.Read32(address);
+            LoadRegister(instruction.Rt, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
+    }
+
+    private void ExecuteLwl(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
+
+        try
+        {
+            uint memoryValue = _bus.Read32(address & ~3u);
+            uint registerValue = GetLoadMergeValue(instruction.Rt);
+            uint value = (address & 3) switch
+            {
+                0 => (registerValue & 0x00FF_FFFF) | (memoryValue << 24),
+                1 => (registerValue & 0x0000_FFFF) | (memoryValue << 16),
+                2 => (registerValue & 0x0000_00FF) | (memoryValue << 8),
+                _ => memoryValue,
+            };
+
+            LoadRegister(instruction.Rt, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
+    }
+
+    private void ExecuteLwr(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
+
+        try
+        {
+            uint memoryValue = _bus.Read32(address & ~3u);
+            uint registerValue = GetLoadMergeValue(instruction.Rt);
+            uint value = (address & 3) switch
+            {
+                0 => memoryValue,
+                1 => (registerValue & 0xFF00_0000) | (memoryValue >> 8),
+                2 => (registerValue & 0xFFFF_0000) | (memoryValue >> 16),
+                _ => (registerValue & 0xFFFF_FF00) | (memoryValue >> 24),
+            };
+
             LoadRegister(instruction.Rt, value);
         }
         catch (InvalidOperationException)
@@ -679,8 +819,13 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         byte value = unchecked((byte)GetRegister(instruction.Rt));
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
         if (IsIsolatedCacheRamAccess(address))
             return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
 
         try
         {
@@ -697,6 +842,9 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         ushort value = unchecked((ushort)GetRegister(instruction.Rt));
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
         if ((address & 0x01) != 0)
         {
             RaiseAddressException(ExceptionCode.AddressErrorStore, address);
@@ -705,6 +853,8 @@ public sealed class R3000A
 
         if (IsIsolatedCacheRamAccess(address))
             return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
 
         try
         {
@@ -721,6 +871,9 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         uint value = GetRegister(instruction.Rt);
 
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
         if ((address & 0x03) != 0)
         {
             RaiseAddressException(ExceptionCode.AddressErrorStore, address);
@@ -730,9 +883,77 @@ public sealed class R3000A
         if (IsIsolatedCacheRamAccess(address))
             return;
 
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
+
         try
         {
             _bus.Write32(address, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
+    }
+
+    private void ExecuteSwl(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
+
+        try
+        {
+            uint alignedAddress = address & ~3u;
+            uint memoryValue = _bus.Peek32(alignedAddress);
+            uint registerValue = GetRegister(instruction.Rt);
+            uint value = (address & 3) switch
+            {
+                0 => (memoryValue & 0xFFFF_FF00) | (registerValue >> 24),
+                1 => (memoryValue & 0xFFFF_0000) | (registerValue >> 16),
+                2 => (memoryValue & 0xFF00_0000) | (registerValue >> 8),
+                _ => registerValue,
+            };
+
+            _bus.Write32(alignedAddress, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
+    }
+
+    private void ExecuteSwr(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
+
+        try
+        {
+            uint alignedAddress = address & ~3u;
+            uint memoryValue = _bus.Peek32(alignedAddress);
+            uint registerValue = GetRegister(instruction.Rt);
+            uint value = (address & 3) switch
+            {
+                0 => registerValue,
+                1 => (memoryValue & 0x0000_00FF) | (registerValue << 8),
+                2 => (memoryValue & 0x0000_FFFF) | (registerValue << 16),
+                _ => (memoryValue & 0x00FF_FFFF) | (registerValue << 24),
+            };
+
+            _bus.Write32(alignedAddress, value);
         }
         catch (InvalidOperationException)
         {
@@ -745,6 +966,31 @@ public sealed class R3000A
         return unchecked(
             GetRegister(instruction.Rs) +
             (uint)instruction.SignedImmediate);
+    }
+
+    private bool RejectUserDataAccess(uint address, ExceptionCode code)
+    {
+        if (!IsUserModeAddressViolation(address))
+            return false;
+
+        RaiseAddressException(code, address);
+        return true;
+    }
+
+    private bool IsUserModeAddressViolation(uint address)
+    {
+        const uint statusCurrentUserModeBit = 1u << 1;
+        return (Cop0.Sr & statusCurrentUserModeBit) != 0 &&
+               address >= 0x8000_0000;
+    }
+
+    private void AccountMemoryAccess(uint address, MemoryAccessKind kind)
+    {
+        if (!_isStepping)
+            return;
+
+        _currentStepCycles = unchecked(
+            _currentStepCycles + _bus.EstimateAccessCycles(address, kind));
     }
 
     private bool IsIsolatedCacheRamAccess(uint virtualAddress)

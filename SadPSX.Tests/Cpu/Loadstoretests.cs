@@ -1,10 +1,43 @@
 using Xunit;
 using SadPSX.Core.Cpu;
+using SadPSX.Core.Memory;
 
 namespace SadPSX.Tests.Cpu;
 
 public sealed class LoadStoreTests
 {
+    public static TheoryData<ushort, uint> LwlCases => new()
+    {
+        { 0, 0x11BB_CCDDu },
+        { 1, 0x2211_CCDDu },
+        { 2, 0x3322_11DDu },
+        { 3, 0x4433_2211u },
+    };
+
+    public static TheoryData<ushort, uint> LwrCases => new()
+    {
+        { 0, 0x4433_2211u },
+        { 1, 0xAA44_3322u },
+        { 2, 0xAABB_4433u },
+        { 3, 0xAABB_CC44u },
+    };
+
+    public static TheoryData<ushort, uint> SwlCases => new()
+    {
+        { 0, 0x4433_22AAu },
+        { 1, 0x4433_AABBu },
+        { 2, 0x44AA_BBCCu },
+        { 3, 0xAABB_CCDDu },
+    };
+
+    public static TheoryData<ushort, uint> SwrCases => new()
+    {
+        { 0, 0xAABB_CCDDu },
+        { 1, 0xBBCC_DD11u },
+        { 2, 0xCCDD_2211u },
+        { 3, 0xDD33_2211u },
+    };
+
     [Fact]
     public void SwThenLwRoundTripsThirtyTwoBitValue()
     {
@@ -96,5 +129,95 @@ public sealed class LoadStoreTests
         cpu.Execute(new Instruction(0x8C09_0000));
 
         Assert.Equal(0x0000_00FFu, cpu.GetRegister(9));
+    }
+
+    [Theory]
+    [MemberData(nameof(LwlCases))]
+    public void LwlMergesExpectedBytesForEveryAlignment(
+        ushort offset,
+        uint expected)
+    {
+        var bus = new Bus();
+        var cpu = CreateCpuWithRegisterValue(bus, 0xAABB_CCDD);
+        bus.Write32(0, 0x4433_2211);
+
+        cpu.Execute(new Instruction(0x8808_0000u | offset));
+
+        Assert.Equal(expected, cpu.GetRegister(8));
+    }
+
+    [Theory]
+    [MemberData(nameof(LwrCases))]
+    public void LwrMergesExpectedBytesForEveryAlignment(
+        ushort offset,
+        uint expected)
+    {
+        var bus = new Bus();
+        var cpu = CreateCpuWithRegisterValue(bus, 0xAABB_CCDD);
+        bus.Write32(0, 0x4433_2211);
+
+        cpu.Execute(new Instruction(0x9808_0000u | offset));
+
+        Assert.Equal(expected, cpu.GetRegister(8));
+    }
+
+    [Theory]
+    [MemberData(nameof(SwlCases))]
+    public void SwlMergesExpectedBytesForEveryAlignment(
+        ushort offset,
+        uint expected)
+    {
+        var bus = new Bus();
+        var cpu = CreateCpuWithRegisterValue(bus, 0xAABB_CCDD);
+        bus.Write32(0, 0x4433_2211);
+
+        cpu.Execute(new Instruction(0xA808_0000u | offset));
+
+        Assert.Equal(expected, bus.Read32(0));
+    }
+
+    [Theory]
+    [MemberData(nameof(SwrCases))]
+    public void SwrMergesExpectedBytesForEveryAlignment(
+        ushort offset,
+        uint expected)
+    {
+        var bus = new Bus();
+        var cpu = CreateCpuWithRegisterValue(bus, 0xAABB_CCDD);
+        bus.Write32(0, 0x4433_2211);
+
+        cpu.Execute(new Instruction(0xB808_0000u | offset));
+
+        Assert.Equal(expected, bus.Read32(0));
+    }
+
+    [Fact]
+    public void ConsecutiveLwlAndLwrMergePendingLoadValue()
+    {
+        var bus = new Bus();
+        var cpu = CreateCpuWithRegisterValue(bus, 0xAABB_CCDD);
+        cpu.Reset(0x100);
+        cpu.Execute(new Instruction(0x3C08_AABB));
+        cpu.Execute(new Instruction(0x3508_CCDD));
+
+        bus.Write32(0x0000, 0x4433_2211);
+        bus.Write32(0x0004, 0x8877_6655);
+        bus.Write32(0x0100, 0x8808_0004); // lwl $t0, 4($zero)
+        bus.Write32(0x0104, 0x9808_0001); // lwr $t0, 1($zero)
+        bus.Write32(0x0108, 0x0000_0000); // nop
+
+        cpu.Step();
+        cpu.Step();
+        cpu.Step();
+
+        Assert.Equal(0x5544_3322u, cpu.GetRegister(8));
+    }
+
+    private static R3000A CreateCpuWithRegisterValue(Bus bus, uint value)
+    {
+        var cpu = new R3000A(bus);
+        cpu.Execute(new Instruction(0x3C08_0000u | (value >> 16)));
+        cpu.Execute(new Instruction(0x3508_0000u | (value & 0xFFFF)));
+        return cpu;
     }
 }

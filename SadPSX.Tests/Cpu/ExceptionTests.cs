@@ -156,4 +156,91 @@ public sealed class ExceptionTests
 
         Assert.Equal(0u, cpu.GetRegister(10)); // 0x10 nunca rodou
     }
+
+    [Fact]
+    public void UserModeCannotFetchFromKernelSegments()
+    {
+        var cpu = new R3000A();
+        cpu.Reset(0x8000_0000);
+        cpu.Cop0.Sr = 1u << 1;
+
+        cpu.Step();
+
+        Assert.Equal((uint)ExceptionCode.AddressErrorLoad, ExceptionCodeFrom(cpu));
+        Assert.Equal(0x8000_0000u, cpu.Cop0.BadVaddr);
+    }
+
+    [Fact]
+    public void UserModeCannotLoadFromKernelSegments()
+    {
+        var cpu = new R3000A();
+        cpu.Reset(0x1000);
+        cpu.Execute(new Instruction(0x3C08_8000)); // lui $t0, 0x8000
+        cpu.Cop0.Sr = 1u << 1;
+
+        cpu.Execute(new Instruction(0x8D09_0000)); // lw $t1, 0($t0)
+
+        Assert.Equal((uint)ExceptionCode.AddressErrorLoad, ExceptionCodeFrom(cpu));
+        Assert.Equal(0x8000_0000u, cpu.Cop0.BadVaddr);
+    }
+
+    [Fact]
+    public void UserModeCannotStoreToKernelSegments()
+    {
+        var cpu = new R3000A();
+        cpu.Reset(0x1000);
+        cpu.Execute(new Instruction(0x3C08_8000)); // lui $t0, 0x8000
+        cpu.Cop0.Sr = 1u << 1;
+
+        cpu.Execute(new Instruction(0xAD00_0000)); // sw $zero, 0($t0)
+
+        Assert.Equal((uint)ExceptionCode.AddressErrorStore, ExceptionCodeFrom(cpu));
+        Assert.Equal(0x8000_0000u, cpu.Cop0.BadVaddr);
+    }
+
+    [Fact]
+    public void ProcessorIdMatchesPlayStationR3000A()
+    {
+        var cpu = new R3000A();
+
+        Assert.Equal(2u, cpu.Cop0.GetRegister(15));
+    }
+
+    [Fact]
+    public void Mtc0CanOnlyChangeSoftwareInterruptBitsInCause()
+    {
+        var cpu = new R3000A();
+        cpu.Cop0.Cause = 0x8000_007C;
+        cpu.Execute(new Instruction(0x2408_0300)); // addiu $t0, $zero, 0x0300
+
+        cpu.Execute(new Instruction(0x4088_6800)); // mtc0 $t0, $13
+
+        Assert.Equal(0x8000_037Cu, cpu.Cop0.Cause);
+    }
+
+    [Fact]
+    public void Mtc0IgnoresWritesToReadOnlyRegisters()
+    {
+        var cpu = new R3000A();
+        cpu.Execute(new Instruction(0x2408_002A)); // addiu $t0, $zero, 42
+
+        cpu.Execute(new Instruction(0x4088_7800)); // mtc0 $t0, $15
+
+        Assert.Equal(2u, cpu.Cop0.GetRegister(15));
+    }
+
+    [Fact]
+    public void Mfc0FromUnavailableRegisterRaisesReservedInstruction()
+    {
+        var cpu = new R3000A();
+        cpu.Reset(0x1000);
+
+        cpu.Execute(new Instruction(0x4008_0000)); // mfc0 $t0, $0
+
+        Assert.Equal((uint)ExceptionCode.ReservedInstruction, ExceptionCodeFrom(cpu));
+        Assert.Equal(0x1000u, cpu.Cop0.Epc);
+    }
+
+    private static uint ExceptionCodeFrom(R3000A cpu) =>
+        (cpu.Cop0.Cause >> 2) & 0x1F;
 }

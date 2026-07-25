@@ -163,4 +163,47 @@ public sealed class PsxMachineTests
 
         Assert.Same(bus, machine.Bus);
     }
+
+    [Fact]
+    public void RunTicksRegisteredDevicesWithElapsedClockCycles()
+    {
+        var machine = new PsxMachine();
+        var device = new RecordingClockedDevice();
+        machine.RegisterClockedDevice(device);
+        machine.LoadBios(CreateBiosImageWithInstructions(
+            0x0000_0000,
+            0x0000_0000));
+
+        machine.Run(2);
+
+        Assert.Equal(58ul, machine.ClockCycles);
+        Assert.Equal(58ul, device.TotalCycles);
+        Assert.Equal(2, device.TickCount);
+    }
+
+    [Fact]
+    public void RegisterClockedDeviceDoesNotRegisterSameInstanceTwice()
+    {
+        var machine = new PsxMachine();
+        var device = new RecordingClockedDevice();
+        machine.RegisterClockedDevice(device);
+        machine.RegisterClockedDevice(device);
+        machine.LoadBios(CreateBiosImageWithInstructions(0x0000_0000));
+
+        machine.Step();
+
+        Assert.Equal(1, device.TickCount);
+    }
+
+    private sealed class RecordingClockedDevice : IClockedDevice
+    {
+        public ulong TotalCycles { get; private set; }
+        public int TickCount { get; private set; }
+
+        public void Tick(uint cycles)
+        {
+            TotalCycles += cycles;
+            TickCount++;
+        }
+    }
 }
