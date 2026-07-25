@@ -29,7 +29,7 @@ public sealed class Bus
     private const uint ScratchpadSize = Scratchpad.SizeInBytes;
 
     private const uint IoPortsBase = 0x1F80_1000;
-    private const uint IoPortsSize = 0x2000; // 8 KiB
+    private const uint IoPortsSize = 0x1000; // 8 KiB
 
     private const uint Expansion2Base = 0x1F80_2000;
     private const uint Expansion2Size = 0x2000; // 8 KiB
