@@ -52,6 +52,8 @@ public sealed class Bus
     public BiosRom Bios { get; }
     public Mmio Mmio { get; }
     public MemoryControl MemoryControl => Mmio.MemoryControl;
+    public InterruptController InterruptController => Mmio.InterruptController;
+    public RootCounters RootCounters => Mmio.RootCounters;
     public ExpansionRegion1 Expansion1 { get; }
 
     public event Action<MemoryAccess>? MemoryAccessed;

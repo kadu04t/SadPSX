@@ -26,12 +26,14 @@ public sealed class PsxMachine
     {
         Bus = new Bus();
         Cpu = new R3000A(Bus);
+        RegisterClockedDevice(Bus.RootCounters);
     }
 
     public PsxMachine(Bus bus)
     {
         Bus = bus ?? throw new ArgumentNullException(nameof(bus));
         Cpu = new R3000A(Bus);
+        RegisterClockedDevice(Bus.RootCounters);
     }
 
     /// <summary>
@@ -42,7 +44,7 @@ public sealed class PsxMachine
     public void LoadBios(byte[] biosImage)
     {
         Bus.Bios.Load(biosImage);
-        Cpu.Reset();
+        Reset();
     }
 
     /// <summary>
@@ -117,6 +119,8 @@ public sealed class PsxMachine
     /// </summary>
     public void Reset()
     {
+        Bus.InterruptController.Reset();
+        Bus.RootCounters.Reset();
         Cpu.Reset();
     }
 }

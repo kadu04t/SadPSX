@@ -2,21 +2,40 @@ namespace SadPSX.Core.Memory;
 
 public sealed class Mmio
 {
+    private readonly IMmioDevice[] _devices;
     private readonly List<MmioAccess> _accessLog = new();
     private readonly Dictionary<MmioAccessKey, MmioAccessSummary> _accessSummaries = new();
     private ulong _accessSequence;
 
     public Mmio()
-        : this(new MemoryControl())
+        : this(new MemoryControl(), new InterruptController())
     {
     }
 
     public Mmio(MemoryControl memoryControl)
+        : this(memoryControl, new InterruptController())
+    {
+    }
+
+    public Mmio(
+        MemoryControl memoryControl,
+        InterruptController interruptController)
     {
         MemoryControl = memoryControl ?? throw new ArgumentNullException(nameof(memoryControl));
+        InterruptController = interruptController ??
+            throw new ArgumentNullException(nameof(interruptController));
+        RootCounters = new RootCounters(InterruptController);
+        _devices =
+        [
+            MemoryControl,
+            InterruptController,
+            RootCounters,
+        ];
     }
 
     public MemoryControl MemoryControl { get; }
+    public InterruptController InterruptController { get; }
+    public RootCounters RootCounters { get; }
     public uint? LastUnhandledReadAddress { get; private set; }
     public uint? LastUnhandledWriteAddress { get; private set; }
     public int MaxLoggedAccesses { get; set; } = 256;
@@ -28,8 +47,9 @@ public sealed class Mmio
 
     public byte Read8(uint address)
     {
-        bool handled = MemoryControl.Handles(address);
-        byte value = handled ? MemoryControl.Read8(address) : (byte)0;
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
+        byte value = device?.Read8(address) ?? 0;
 
         if (!handled)
             LastUnhandledReadAddress = address;
@@ -40,10 +60,11 @@ public sealed class Mmio
 
     public void Write8(uint address, byte value)
     {
-        bool handled = MemoryControl.Handles(address);
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
 
         if (handled)
-            MemoryControl.Write8(address, value);
+            device!.Write8(address, value);
         else
             LastUnhandledWriteAddress = address;
 
@@ -52,8 +73,9 @@ public sealed class Mmio
 
     public ushort Read16(uint address)
     {
-        bool handled = MemoryControl.Handles(address);
-        ushort value = handled ? MemoryControl.Read16(address) : (ushort)0;
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
+        ushort value = device?.Read16(address) ?? 0;
 
         if (!handled)
             LastUnhandledReadAddress = address;
@@ -64,10 +86,11 @@ public sealed class Mmio
 
     public void Write16(uint address, ushort value)
     {
-        bool handled = MemoryControl.Handles(address);
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
 
         if (handled)
-            MemoryControl.Write16(address, value);
+            device!.Write16(address, value);
         else
             LastUnhandledWriteAddress = address;
 
@@ -76,8 +99,9 @@ public sealed class Mmio
 
     public uint Read32(uint address)
     {
-        bool handled = MemoryControl.Handles(address);
-        uint value = handled ? MemoryControl.Read32(address) : 0;
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
+        uint value = device?.Read32(address) ?? 0;
 
         if (!handled)
             LastUnhandledReadAddress = address;
@@ -88,21 +112,31 @@ public sealed class Mmio
 
     public uint Peek32(uint address)
     {
-        return MemoryControl.Handles(address)
-            ? MemoryControl.Read32(address)
-            : 0;
+        return FindDevice(address)?.Peek32(address) ?? 0;
     }
 
     public void Write32(uint address, uint value)
     {
-        bool handled = MemoryControl.Handles(address);
+        IMmioDevice? device = FindDevice(address);
+        bool handled = device is not null;
 
         if (handled)
-            MemoryControl.Write32(address, value);
+            device!.Write32(address, value);
         else
             LastUnhandledWriteAddress = address;
 
         Record(address, MemoryAccessKind.Write, 4, value, handled);
+    }
+
+    private IMmioDevice? FindDevice(uint address)
+    {
+        foreach (IMmioDevice device in _devices)
+        {
+            if (device.Handles(address))
+                return device;
+        }
+
+        return null;
     }
 
     public void ClearAccessLog()
@@ -122,9 +156,8 @@ public sealed class Mmio
         bool handled)
     {
         _accessSequence++;
-        string registerName = handled
-            ? MemoryControl.GetRegisterName(address)
-            : "UNHANDLED";
+        string registerName = FindDevice(address)?.GetRegisterName(address) ??
+            "UNHANDLED";
 
         var access = new MmioAccess(
             _accessSequence,

@@ -141,6 +141,8 @@ public sealed class R3000A
         _currentStepCycles = _bus.EstimateAccessCycles(
             Pc,
             MemoryAccessKind.InstructionFetch);
+        Cop0.SetHardwareInterruptPending(
+            _bus.InterruptController.IsPending);
 
         bool applyPendingBranchAfterThisStep = _branchPending;
         uint pendingTarget = _branchTarget;
@@ -162,7 +164,12 @@ public sealed class R3000A
         _isStepping = true;
         try
         {
-            if (IsUserModeAddressViolation(Pc))
+            if (!applyPendingBranchAfterThisStep &&
+                Cop0.ShouldTakeInterrupt())
+            {
+                RaiseException(ExceptionCode.Interrupt);
+            }
+            else if (IsUserModeAddressViolation(Pc))
             {
                 RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
             }

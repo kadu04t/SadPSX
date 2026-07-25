@@ -1,6 +1,6 @@
 namespace SadPSX.Core.Memory;
 
-public sealed class MemoryControl
+public sealed class MemoryControl : IMmioDevice
 {
     public const uint Expansion1BaseAddress = 0x1F80_1000;
     public const uint Expansion2BaseAddress = 0x1F80_1004;
@@ -123,6 +123,9 @@ public sealed class MemoryControl
             _ => "UNKNOWN",
         };
     }
+
+    string IMmioDevice.GetRegisterName(uint address) =>
+        GetRegisterName(address);
 
     private uint GetRegisterAddress(uint address)
     {

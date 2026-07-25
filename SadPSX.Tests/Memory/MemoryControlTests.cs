@@ -62,15 +62,15 @@ public sealed class MemoryControlTests
 
         bus.Write32(MemoryControl.RamSizeAddress, 0x0000_0B88);
         bus.Read32(MemoryControl.RamSizeAddress);
-        bus.Read32(0x1F80_1070);
-        bus.Read32(0x1F80_1070);
+        bus.Read32(0x1F80_1080);
+        bus.Read32(0x1F80_1080);
 
         Assert.Equal(4ul, bus.Mmio.TotalAccessCount);
         Assert.Equal(4, bus.Mmio.AccessLog.Count);
 
         MmioAccessSummary unhandledReads = Assert.Single(
             bus.Mmio.AccessSummaries,
-            summary => summary.Address == 0x1F80_1070);
+            summary => summary.Address == 0x1F80_1080);
 
         Assert.Equal(2ul, unhandledReads.Count);
         Assert.False(unhandledReads.Handled);

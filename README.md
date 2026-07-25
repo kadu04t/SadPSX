@@ -20,6 +20,8 @@ O SadPSX já consegue:
 - Aplicar load delay em loads e `MFC0`.
 - Executar `LWL`, `LWR`, `SWL` e `SWR`.
 - Processar exceções através do COP0.
+- Entregar interrupções mascaradas ao COP0.
+- Executar os três root counters e suas IRQs.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
@@ -61,6 +63,26 @@ O COP0 atualmente possui:
 - Permissões de leitura e escrita específicas por registrador.
 - `PRID` compatível com o R3000A do PlayStation.
 - Reset do estado gravável e restauração dos valores fixos.
+- Interrupções de software e a linha de hardware em `CAUSE.bit10`.
+
+### Interrupções
+
+O controlador de interrupções implementa `I_STAT` e `I_MASK`, incluindo latch
+das onze fontes, máscara, acknowledge por escrita de zero e propagação da linha
+IRQ para o COP0. Interrupções habilitadas respeitam `SR.IEc`, os bits de máscara
+do COP0 e a conclusão de branch delay slots.
+
+### Timers
+
+Os três root counters implementam contador, modo e target em
+`0x1F801100-0x1F801128`, incluindo:
+
+- Clock do sistema e divisor por oito do Timer 2.
+- Reset por target ou overflow.
+- IRQ por target ou overflow.
+- Modos one-shot, repeat, pulse e toggle.
+- Flags de target/overflow limpas após leitura.
+- Sincronização básica com sinais de HBlank/VBlank e dotclock.
 
 ### Memória
 
@@ -76,6 +98,8 @@ O barramento implementa as seguintes regiões:
 | Expansion Region 2 | `0x1F802000-0x1F803FFF` | Stub |
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
+| Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
+| Root Counters | `0x1F801100-0x1F801128` | Implementados |
 | Cache Control | `0xFFFE0130` | Registrador implementado |
 
 Escritas destinadas à cache isolada são impedidas de alterar a RAM principal,
@@ -199,6 +223,8 @@ Os testes cobrem:
 - Exceções e registradores do COP0.
 - Proteção entre modo usuário e segmentos do kernel.
 - Contabilização de ciclos e sincronização de dispositivos.
+- Controlador de interrupções e entrega ao COP0.
+- Timers, targets, divisores e geração de IRQ.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
@@ -227,8 +253,6 @@ O SadPSX ainda não possui:
 
 - GPU e saída de vídeo.
 - DMA.
-- Controlador de interrupções.
-- Timers.
 - GTE/COP2.
 - CD-ROM e carregamento de jogos.
 - SPU e saída de áudio.
@@ -237,19 +261,15 @@ O SadPSX ainda não possui:
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 
-Os periféricos MMIO ainda são stubs. Memory Control e Cache Control preservam
-seus valores, mas timings e efeitos completos ainda não são emulados.
+Os demais periféricos MMIO ainda são stubs. Os clocks de dotclock, HBlank e
+VBlank já possuem pontos de integração nos timers, mas dependerão da futura GPU
+para avançar com a temporização real do vídeo.
 
 ## Próximos passos
 
-Antes de adicionar periféricos complexos, a prioridade é:
-
-1. Ampliar testes de conformidade com pequenos programas MIPS.
-2. Refinar timings internos da CPU, cache e memory control.
-3. Usar os diagnósticos para mapear os próximos acessos MMIO da BIOS.
-
-Depois dessa base, os próximos componentes naturais são controlador de
-interrupções, timers, DMA e uma implementação mínima da GPU.
+Os próximos componentes naturais são DMA e uma implementação mínima da GPU.
+Depois deles, CD-ROM, controles/memory cards e SPU poderão avançar sobre uma
+base de interrupções e temporização já funcional.
 
 ## Licença
 

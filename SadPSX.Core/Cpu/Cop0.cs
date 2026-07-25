@@ -21,6 +21,9 @@ public sealed class Cop0
     private const int ProcessorIdIndex = 15;
     private const uint ProcessorId = 0x0000_0002;
     private const uint CauseSoftwareInterruptMask = 0x0000_0300;
+    private const uint CauseHardwareInterruptBit = 1u << 10;
+    private const uint InterruptPendingMask = 0x0000_FF00;
+    private const uint StatusCurrentInterruptEnableBit = 1;
 
     private readonly uint[] _registers = new uint[RegisterCount];
 
@@ -133,6 +136,20 @@ public sealed class Cop0
     {
         Array.Clear(_registers);
         _registers[ProcessorIdIndex] = ProcessorId;
+    }
+
+    public void SetHardwareInterruptPending(bool pending)
+    {
+        if (pending)
+            Cause |= CauseHardwareInterruptBit;
+        else
+            Cause &= ~CauseHardwareInterruptBit;
+    }
+
+    public bool ShouldTakeInterrupt()
+    {
+        return (Sr & StatusCurrentInterruptEnableBit) != 0 &&
+               (Sr & Cause & InterruptPendingMask) != 0;
     }
 
     private static bool IsUnavailableRegister(int index) =>
