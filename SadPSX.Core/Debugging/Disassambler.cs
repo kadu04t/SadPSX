@@ -39,7 +39,7 @@ public static class Disassembler
             0x05 => Branch("bne", instruction, pc),
             0x06 => BranchNoRt("blez", instruction, pc),
             0x07 => BranchNoRt("bgtz", instruction, pc),
-            0x08 => ImmOp("addi", instruction),   // não implementada na CPU ainda, mas decodificável
+            0x08 => ImmOp("addi", instruction),
             0x09 => ImmOp("addiu", instruction),
             0x0A => ImmOp("slti", instruction),
             0x0B => ImmOpUnsignedMnemonic("sltiu", instruction),

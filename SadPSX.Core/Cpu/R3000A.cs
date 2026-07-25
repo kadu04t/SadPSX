@@ -239,6 +239,10 @@ public sealed class R3000A
                 ExecuteSpecial(instruction);
                 break;
 
+            case 0x08: // ADDI rt, rs, immediate (com trap de overflow)
+                ExecuteAddi(instruction);
+                break;
+
             case 0x09: // ADDIU rt, rs, immediate
                 ExecuteAddiu(instruction);
                 break;
@@ -410,6 +414,29 @@ public sealed class R3000A
 
         if (takeBranch)
             ScheduleBranch(BranchTarget(instruction));
+    }
+
+    private void ExecuteAddi(Instruction instruction)
+    {
+        int source = unchecked((int)GetRegister(instruction.Rs));
+        int immediate = instruction.SignedImmediate;
+
+        try
+        {
+            // "checked" força o runtime a lançar OverflowException se a
+            // soma estourar o range de int32 — exatamente a mesma
+            // condição que o hardware real detecta para disparar a
+            // exceção de overflow do ADDI (ao contrário do ADDIU, que
+            // nunca dispara essa exceção e sempre faz wrap silencioso).
+            int result = checked(source + immediate);
+            SetRegister(instruction.Rt, unchecked((uint)result));
+        }
+        catch (OverflowException)
+        {
+            // O registrador de destino NÃO é modificado quando a exceção
+            // é disparada — o hardware real intercepta antes da escrita.
+            RaiseException(ExceptionCode.Overflow);
+        }
     }
 
     private void ExecuteAddiu(Instruction instruction)
