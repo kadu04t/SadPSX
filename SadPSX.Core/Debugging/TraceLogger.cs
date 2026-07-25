@@ -58,9 +58,26 @@ public sealed class TraceLogger
     public void Step()
     {
         uint pc = _machine.Cpu.Pc;
-        uint rawInstruction = _machine.Bus.Read32(pc);
-        var instruction = new Instruction(rawInstruction);
-        string disassembly = Disassembler.Disassemble(instruction, pc);
+        uint rawInstruction = 0;
+        string disassembly;
+
+        if ((pc & 0x03) != 0)
+        {
+            disassembly = "<erro de alinhamento no fetch>";
+        }
+        else
+        {
+            try
+            {
+                rawInstruction = _machine.Bus.Read32(pc);
+                var instruction = new Instruction(rawInstruction);
+                disassembly = Disassembler.Disassemble(instruction, pc);
+            }
+            catch (InvalidOperationException)
+            {
+                disassembly = "<erro de barramento no fetch>";
+            }
+        }
 
         var entry = new TraceEntry(_machine.Cpu.Cycles, pc, rawInstruction, disassembly);
         RecordEntry(entry);

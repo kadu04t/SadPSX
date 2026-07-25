@@ -125,6 +125,7 @@ public sealed class StepTests
          * ori   $t0, $t0, 0x5678
          * sw    $t0, 0x0100($zero)
          * lw    $t1, 0x0100($zero)
+         * nop
          */
 
         bus.Write32(
@@ -143,6 +144,11 @@ public sealed class StepTests
             TestProgramAddress + 0x0C,
             0x8C09_0100);
 
+        bus.Write32(
+            TestProgramAddress + 0x10,
+            0x0000_0000);
+
+        cpu.Step();
         cpu.Step();
         cpu.Step();
         cpu.Step();
@@ -157,11 +163,11 @@ public sealed class StepTests
             cpu.GetRegister(9));
 
         Assert.Equal(
-            4ul,
+            5ul,
             cpu.Cycles);
 
         Assert.Equal(
-            0x0000_0010u,
+            0x0000_0014u,
             cpu.Pc);
     }
 

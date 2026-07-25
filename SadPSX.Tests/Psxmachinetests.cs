@@ -145,9 +145,11 @@ public sealed class PsxMachineTests
         machine.Bus.Write32(0x0000_0100, 0xDEAD_BEEF);
 
         var image = CreateBiosImageWithInstructions(
-            0x8C08_0100 // lw $t0, 0x100($zero)
+            0x8C08_0100, // lw $t0, 0x100($zero)
+            0x0000_0000  // nop (load delay)
         );
         machine.LoadBios(image);
+        machine.Step();
         machine.Step();
 
         Assert.Equal(0xDEAD_BEEFu, machine.Cpu.GetRegister(8));

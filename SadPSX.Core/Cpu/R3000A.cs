@@ -51,6 +51,11 @@ public sealed class R3000A
     // essa instrução dispare uma exceção.
     private bool _executingInBranchDelaySlot;
 
+    private bool _isStepping;
+    private int _pendingLoadRegister = -1;
+    private uint _pendingLoadValue;
+    private int _writtenRegisterThisStep = -1;
+
     public Cop0 Cop0 { get; } = new();
 
     public R3000A(Bus bus)
@@ -90,10 +95,12 @@ public sealed class R3000A
         _branchTarget = 0;
         _executingInBranchDelaySlot = false;
         _exceptionRaised = false;
+        _isStepping = false;
+        _pendingLoadRegister = -1;
+        _pendingLoadValue = 0;
+        _writtenRegisterThisStep = -1;
 
-        Cop0.SetRegister(12, 0); // SR
-        Cop0.SetRegister(13, 0); // CAUSE
-        Cop0.SetRegister(14, 0); // EPC
+        Cop0.Reset();
     }
 
     /// <summary>
@@ -114,8 +121,6 @@ public sealed class R3000A
     /// </summary>
     public void Step()
     {
-        uint rawInstruction = _bus.Read32(Pc);
-
         bool applyPendingBranchAfterThisStep = _branchPending;
         uint pendingTarget = _branchTarget;
         _branchPending = false;
@@ -124,8 +129,43 @@ public sealed class R3000A
         // um branch pendente agendado no ciclo anterior.
         _executingInBranchDelaySlot = applyPendingBranchAfterThisStep;
         _exceptionRaised = false;
+        _writtenRegisterThisStep = -1;
 
-        Execute(new Instruction(rawInstruction));
+        int loadRegisterToCommit = _pendingLoadRegister;
+        uint loadValueToCommit = _pendingLoadValue;
+        _pendingLoadRegister = -1;
+        _pendingLoadValue = 0;
+
+        _isStepping = true;
+        try
+        {
+            if ((Pc & 0x03) != 0)
+            {
+                RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
+            }
+            else
+            {
+                try
+                {
+                    uint rawInstruction = _bus.Read32(Pc);
+                    Execute(new Instruction(rawInstruction));
+                }
+                catch (InvalidOperationException)
+                {
+                    RaiseException(ExceptionCode.InstructionBusError);
+                }
+            }
+        }
+        finally
+        {
+            _isStepping = false;
+        }
+
+        if (loadRegisterToCommit > 0 &&
+            _writtenRegisterThisStep != loadRegisterToCommit)
+        {
+            _registers[loadRegisterToCommit] = loadValueToCommit;
+        }
 
         if (!_exceptionRaised)
         {
@@ -160,6 +200,7 @@ public sealed class R3000A
     private const uint ExceptionVectorRom = 0xBFC0_0180;
 
     private const uint StatusBootExceptionVectorsBit = 1u << 22; // SR.BEV
+    private const uint StatusIsolateCacheBit = 1u << 16; // SR.IsC
 
     // Sinaliza ao Step() que uma exceção ocorreu durante Execute() e que o
     // Pc/NextPc já foram definidos para o vetor de exceção — o Step() deve
@@ -189,11 +230,18 @@ public sealed class R3000A
         // A exceção interrompe o fluxo imediatamente: qualquer branch que
         // estivesse agendado para depois do delay slot é descartado.
         _branchPending = false;
+        _pendingLoadRegister = -1;
 
         Pc = vector;
         NextPc = unchecked(vector + 4);
 
         _exceptionRaised = true;
+    }
+
+    private void RaiseAddressException(ExceptionCode code, uint badVirtualAddress)
+    {
+        Cop0.BadVaddr = badVirtualAddress;
+        RaiseException(code);
     }
 
     public uint GetRegister(int index)
@@ -211,7 +259,27 @@ public sealed class R3000A
         if (index == 0)
             return;
 
+        if (_isStepping)
+            _writtenRegisterThisStep = index;
+
         _registers[index] = value;
+    }
+
+    private void LoadRegister(int index, uint value)
+    {
+        ValidateRegisterIndex(index);
+
+        if (index == 0)
+            return;
+
+        if (!_isStepping)
+        {
+            SetRegister(index, value);
+            return;
+        }
+
+        _pendingLoadRegister = index;
+        _pendingLoadValue = value;
     }
 
     private static void ValidateRegisterIndex(int index)
@@ -349,8 +417,8 @@ public sealed class R3000A
                 break;
 
             default:
-                throw new NotImplementedException(
-                    $"Opcode 0x{instruction.Opcode:X2} não implementado.");
+                RaiseException(ExceptionCode.ReservedInstruction);
+                break;
         }
 
         // Mesmo em execução direta, $zero deve continuar protegido.
@@ -363,7 +431,7 @@ public sealed class R3000A
         switch (instruction.Rs)
         {
             case 0x00: // MFC0 rt, rd  (rd aqui é o registrador COP0 de origem)
-                SetRegister(instruction.Rt, Cop0.GetRegister(instruction.Rd));
+                LoadRegister(instruction.Rt, Cop0.GetRegister(instruction.Rd));
                 break;
 
             case 0x04: // MTC0 rt, rd  (rd aqui é o registrador COP0 de destino)
@@ -375,12 +443,15 @@ public sealed class R3000A
                        // instrução, mas na prática é a única operação COP0
                        // que usa esse valor de rs em código real, então
                        // tratamos diretamente aqui.
-                Cop0.ReturnFromException();
+                if ((instruction.Value & 0x001F_FFFF) == 0x10)
+                    Cop0.ReturnFromException();
+                else
+                    RaiseException(ExceptionCode.ReservedInstruction);
                 break;
 
             default:
-                throw new NotImplementedException(
-                    $"Operação COP0 com rs=0x{instruction.Rs:X2} não implementada.");
+                RaiseException(ExceptionCode.ReservedInstruction);
+                break;
         }
     }
 
@@ -397,6 +468,12 @@ public sealed class R3000A
 
     private void ExecuteRegImm(Instruction instruction)
     {
+        if (instruction.Rt is not (0x00 or 0x01 or 0x10 or 0x11))
+        {
+            RaiseException(ExceptionCode.ReservedInstruction);
+            return;
+        }
+
         bool isLessThanZero = (int)GetRegister(instruction.Rs) < 0;
         bool isGreaterOrEqualZero = !isLessThanZero;
 
@@ -439,6 +516,38 @@ public sealed class R3000A
         }
     }
 
+    private void ExecuteAdd(Instruction instruction)
+    {
+        int left = unchecked((int)GetRegister(instruction.Rs));
+        int right = unchecked((int)GetRegister(instruction.Rt));
+
+        try
+        {
+            int result = checked(left + right);
+            SetRegister(instruction.Rd, unchecked((uint)result));
+        }
+        catch (OverflowException)
+        {
+            RaiseException(ExceptionCode.Overflow);
+        }
+    }
+
+    private void ExecuteSub(Instruction instruction)
+    {
+        int left = unchecked((int)GetRegister(instruction.Rs));
+        int right = unchecked((int)GetRegister(instruction.Rt));
+
+        try
+        {
+            int result = checked(left - right);
+            SetRegister(instruction.Rd, unchecked((uint)result));
+        }
+        catch (OverflowException)
+        {
+            RaiseException(ExceptionCode.Overflow);
+        }
+    }
+
     private void ExecuteAddiu(Instruction instruction)
     {
         uint result = unchecked(
@@ -475,45 +584,94 @@ public sealed class R3000A
     private void ExecuteLb(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
-        sbyte value = unchecked((sbyte)_bus.Read8(address));
 
-        SetRegister(
-            instruction.Rt,
-            unchecked((uint)(int)value));
+        try
+        {
+            sbyte value = unchecked((sbyte)_bus.Read8(address));
+            LoadRegister(instruction.Rt, unchecked((uint)(int)value));
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteLbu(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
-        byte value = _bus.Read8(address);
 
-        SetRegister(instruction.Rt, value);
+        try
+        {
+            byte value = _bus.Read8(address);
+            LoadRegister(instruction.Rt, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteLh(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
-        short value = unchecked((short)_bus.Read16(address));
 
-        SetRegister(
-            instruction.Rt,
-            unchecked((uint)(int)value));
+        if ((address & 0x01) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
+            return;
+        }
+
+        try
+        {
+            short value = unchecked((short)_bus.Read16(address));
+            LoadRegister(instruction.Rt, unchecked((uint)(int)value));
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteLhu(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
-        ushort value = _bus.Read16(address);
 
-        SetRegister(instruction.Rt, value);
+        if ((address & 0x01) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
+            return;
+        }
+
+        try
+        {
+            ushort value = _bus.Read16(address);
+            LoadRegister(instruction.Rt, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteLw(Instruction instruction)
     {
         uint address = GetEffectiveAddress(instruction);
-        uint value = _bus.Read32(address);
 
-        SetRegister(instruction.Rt, value);
+        if ((address & 0x03) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
+            return;
+        }
+
+        try
+        {
+            uint value = _bus.Read32(address);
+            LoadRegister(instruction.Rt, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteSb(Instruction instruction)
@@ -521,7 +679,17 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         byte value = unchecked((byte)GetRegister(instruction.Rt));
 
-        _bus.Write8(address, value);
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        try
+        {
+            _bus.Write8(address, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteSh(Instruction instruction)
@@ -529,7 +697,23 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         ushort value = unchecked((ushort)GetRegister(instruction.Rt));
 
-        _bus.Write16(address, value);
+        if ((address & 0x01) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorStore, address);
+            return;
+        }
+
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        try
+        {
+            _bus.Write16(address, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private void ExecuteSw(Instruction instruction)
@@ -537,7 +721,23 @@ public sealed class R3000A
         uint address = GetEffectiveAddress(instruction);
         uint value = GetRegister(instruction.Rt);
 
-        _bus.Write32(address, value);
+        if ((address & 0x03) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorStore, address);
+            return;
+        }
+
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        try
+        {
+            _bus.Write32(address, value);
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
     }
 
     private uint GetEffectiveAddress(Instruction instruction)
@@ -545,6 +745,21 @@ public sealed class R3000A
         return unchecked(
             GetRegister(instruction.Rs) +
             (uint)instruction.SignedImmediate);
+    }
+
+    private bool IsIsolatedCacheRamAccess(uint virtualAddress)
+    {
+        if ((Cop0.Sr & StatusIsolateCacheBit) == 0)
+            return false;
+
+        uint physicalAddress = Bus.TranslateToPhysical(
+            virtualAddress,
+            out MemorySegment segment);
+
+        bool isCachedSegment =
+            segment is MemorySegment.Kuseg or MemorySegment.Kseg0;
+
+        return isCachedSegment && physicalAddress < 8 * 1024 * 1024;
     }
 
     private void ExecuteSpecial(Instruction instruction)
@@ -603,12 +818,20 @@ public sealed class R3000A
                         GetRegister(instruction.Rt)));
                 break;
 
+            case 0x20: // ADD rd, rs, rt
+                ExecuteAdd(instruction);
+                break;
+
             case 0x23: // SUBU rd, rs, rt
                 SetRegister(
                     instruction.Rd,
                     unchecked(
                         GetRegister(instruction.Rs) -
                         GetRegister(instruction.Rt)));
+                break;
+
+            case 0x22: // SUB rd, rs, rt
+                ExecuteSub(instruction);
                 break;
 
             case 0x24: // AND rd, rs, rt
@@ -773,8 +996,8 @@ public sealed class R3000A
                 break;
 
             default:
-                throw new NotImplementedException(
-                    $"Função SPECIAL 0x{instruction.Function:X2} não implementada.");
+                RaiseException(ExceptionCode.ReservedInstruction);
+                break;
         }
     }
 

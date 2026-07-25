@@ -162,8 +162,55 @@ public sealed class BusTests
     {
         var bus = new Bus();
 
-        // Uma região dentro de KUSEG que não corresponde a nada conhecido
-        // (nem RAM, nem scratchpad, nem MMIO, nem BIOS).
-        Assert.Throws<InvalidOperationException>(() => bus.Read32(0x1F00_0000));
+        // Expansion Region 3 (0x1FA0_0000+) ainda não é implementada —
+        // continua sendo um caso genuíno de "endereço não mapeado".
+        Assert.Throws<InvalidOperationException>(() => bus.Read32(0x1FA0_0000));
+    }
+
+    [Fact]
+    public void Expansion1ReturnsFloatingBusValueWhenReadAsByte()
+    {
+        var bus = new Bus();
+
+        // Mesmo endereço observado na prática durante o boot real da BIOS:
+        // ela sonda o ROM Header de expansão em busca de um cartucho
+        // conectado. Sem nada conectado, o barramento retorna 0xFF.
+        byte value = bus.Read8(0x1F00_0084);
+
+        Assert.Equal(0xFF, value);
+    }
+
+    [Fact]
+    public void Expansion1WritesAreSilentlyIgnored()
+    {
+        var bus = new Bus();
+
+        var exception = Record.Exception(() => bus.Write32(0x1F00_0000, 0x1234_5678));
+
+        Assert.Null(exception);
+        Assert.Equal(0xFFFF_FFFFu, bus.Read32(0x1F00_0000)); // valor não mudou
+    }
+
+    [Fact]
+    public void Expansion1IsAccessibleThroughKuseg0AndKseg1()
+    {
+        var bus = new Bus();
+
+        Assert.Equal(0xFFu, bus.Read8(0x1F00_0000));   // KUSEG
+        Assert.Equal(0xFFu, bus.Read8(0x9F00_0000));   // KSEG0
+        Assert.Equal(0xFFu, bus.Read8(0xBF00_0000));   // KSEG1
+    }
+
+    [Fact]
+    public void Expansion1DoesNotOverlapWithScratchpad()
+    {
+        var bus = new Bus();
+
+        // O último byte de Expansion1 (0x1F7F_FFFF) não deve afetar o
+        // scratchpad, que começa logo em seguida (0x1F80_0000).
+        bus.Write32(0x1F80_0000, 0xCAFE_BABE);
+
+        Assert.Equal(0xFFFF_FFFFu, bus.Read32(0x1F7F_FFFC)); // ainda dentro de Expansion1
+        Assert.Equal(0xCAFE_BABEu, bus.Read32(0x1F80_0000)); // scratchpad intacto
     }
 }

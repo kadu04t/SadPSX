@@ -7,15 +7,17 @@ namespace SadPSX.Core.Memory;
 ///
 /// Mapa físico implementado (ver psx-spx para referência):
 ///   0x0000_0000 - 0x001F_FFFF  RAM principal (2 MiB, espelhada até 8 MiB)
+///   0x1F00_0000 - 0x1F7F_FFFF  Expansion Region 1 (stub: sem hardware
+///                              conectado, leituras retornam 0xFF)
 ///   0x1F80_0000 - 0x1F8003FF   Scratchpad (1 KiB) — não espelhado em KSEG1
-///   0x1F80_1000 - 0x1F80_2FFF  I/O Ports (stub Mmio por enquanto)
+///   0x1F80_1000 - 0x1F80_1FFF  I/O Ports (stub Mmio por enquanto)
 ///   0x1F80_2000 - 0x1F80_3FFF  Expansion Region 2 (roteado para Mmio)
 ///   0x1FC0_0000 - 0x1FC7_FFFF  BIOS ROM (512 KiB, somente leitura)
 ///   0xFFFE_0000 - 0xFFFE_01FF  Cache Control (apenas via KSEG2)
 ///
-/// Expansion Region 1 e Expansion Region 3 ainda não são implementadas
-/// (nenhum jogo comercial comum as usa para funcionalidade essencial); um
-/// acesso a elas cai no caso "endereço não mapeado" por enquanto.
+/// Expansion Region 3 ainda não é implementada (raramente usada; nenhum
+/// jogo comercial comum depende dela); um acesso a ela cai no caso
+/// "endereço não mapeado" por enquanto.
 /// </summary>
 public sealed class Bus
 {
@@ -24,6 +26,9 @@ public sealed class Bus
     // A RAM é espelhada 4 vezes dentro da janela de 8 MiB reservada a ela
     // no mapa de memória (comportamento real do hardware).
     private const uint RamMirroredWindowSize = 8 * 1024 * 1024;
+
+    private const uint Expansion1Base = 0x1F00_0000;
+    private const uint Expansion1Size = 8 * 1024 * 1024; // 8 MiB (tamanho máximo documentado da região)
 
     private const uint ScratchpadBase = 0x1F80_0000;
     private const uint ScratchpadSize = Scratchpad.SizeInBytes;
@@ -44,23 +49,26 @@ public sealed class Bus
     public Scratchpad Scratchpad { get; }
     public BiosRom Bios { get; }
     public Mmio Mmio { get; }
+    public ExpansionRegion1 Expansion1 { get; }
 
-    public Bus(Ram ram, Scratchpad scratchpad, BiosRom bios, Mmio mmio)
+    public Bus(Ram ram, Scratchpad scratchpad, BiosRom bios, Mmio mmio, ExpansionRegion1 expansion1)
     {
         Ram = ram ?? throw new ArgumentNullException(nameof(ram));
         Scratchpad = scratchpad ?? throw new ArgumentNullException(nameof(scratchpad));
         Bios = bios ?? throw new ArgumentNullException(nameof(bios));
         Mmio = mmio ?? throw new ArgumentNullException(nameof(mmio));
+        Expansion1 = expansion1 ?? throw new ArgumentNullException(nameof(expansion1));
     }
 
-    // Overload de conveniência: cria Scratchpad/BiosRom/Mmio próprios,
-    // reaproveitando a RAM fornecida. Mantém compatibilidade com código
-    // existente que só se importa em compartilhar a RAM entre CPU e testes.
-    public Bus(Ram ram) : this(ram, new Scratchpad(), new BiosRom(), new Mmio())
+    // Overload de conveniência: cria Scratchpad/BiosRom/Mmio/Expansion1
+    // próprios, reaproveitando a RAM fornecida. Mantém compatibilidade com
+    // código existente que só se importa em compartilhar a RAM entre CPU
+    // e testes.
+    public Bus(Ram ram) : this(ram, new Scratchpad(), new BiosRom(), new Mmio(), new ExpansionRegion1())
     {
     }
 
-    public Bus() : this(new Ram(), new Scratchpad(), new BiosRom(), new Mmio())
+    public Bus() : this(new Ram(), new Scratchpad(), new BiosRom(), new Mmio(), new ExpansionRegion1())
     {
     }
 
@@ -73,6 +81,7 @@ public sealed class Bus
             MemoryRegion.Scratchpad => Scratchpad.Read8(offset),
             MemoryRegion.Mmio => Mmio.Read8(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read8(offset),
+            MemoryRegion.Expansion1 => Expansion1.Read8(offset),
             MemoryRegion.CacheControl => 0, // Cache Control não tem leitura significativa modelada ainda
             _ => throw UnmappedAddress(address),
         };
@@ -87,6 +96,7 @@ public sealed class Bus
             case MemoryRegion.Scratchpad: Scratchpad.Write8(offset, value); break;
             case MemoryRegion.Mmio: Mmio.Write8(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break; // ROM: escrita é ignorada, como no hardware real
+            case MemoryRegion.Expansion1: Expansion1.Write8(offset, value); break;
             case MemoryRegion.CacheControl: break; // ainda não modelado
             default: throw UnmappedAddress(address);
         }
@@ -101,6 +111,7 @@ public sealed class Bus
             MemoryRegion.Scratchpad => Scratchpad.Read16(offset),
             MemoryRegion.Mmio => Mmio.Read16(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read16(offset),
+            MemoryRegion.Expansion1 => Expansion1.Read16(offset),
             MemoryRegion.CacheControl => 0,
             _ => throw UnmappedAddress(address),
         };
@@ -115,6 +126,7 @@ public sealed class Bus
             case MemoryRegion.Scratchpad: Scratchpad.Write16(offset, value); break;
             case MemoryRegion.Mmio: Mmio.Write16(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break;
+            case MemoryRegion.Expansion1: Expansion1.Write16(offset, value); break;
             case MemoryRegion.CacheControl: break;
             default: throw UnmappedAddress(address);
         }
@@ -129,6 +141,7 @@ public sealed class Bus
             MemoryRegion.Scratchpad => Scratchpad.Read32(offset),
             MemoryRegion.Mmio => Mmio.Read32(offset + IoPortsBase),
             MemoryRegion.Bios => Bios.Read32(offset),
+            MemoryRegion.Expansion1 => Expansion1.Read32(offset),
             MemoryRegion.CacheControl => 0,
             _ => throw UnmappedAddress(address),
         };
@@ -143,6 +156,7 @@ public sealed class Bus
             case MemoryRegion.Scratchpad: Scratchpad.Write32(offset, value); break;
             case MemoryRegion.Mmio: Mmio.Write32(offset + IoPortsBase, value); break;
             case MemoryRegion.Bios: break;
+            case MemoryRegion.Expansion1: Expansion1.Write32(offset, value); break;
             case MemoryRegion.CacheControl: break;
             default: throw UnmappedAddress(address);
         }
@@ -196,6 +210,9 @@ public sealed class Bus
         if (physical < RamMirroredWindowSize)
             return (MemoryRegion.Ram, physical % RamSize);
 
+        if (physical >= Expansion1Base && physical < Expansion1Base + Expansion1Size)
+            return (MemoryRegion.Expansion1, physical - Expansion1Base);
+
         if (physical >= ScratchpadBase && physical < ScratchpadBase + ScratchpadSize)
         {
             // O scratchpad não é espelhado em KSEG1 (comportamento real do
@@ -236,6 +253,7 @@ public sealed class Bus
         Scratchpad,
         Mmio,
         Bios,
+        Expansion1,
         CacheControl,
         Unmapped,
     }

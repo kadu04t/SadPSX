@@ -1,4 +1,5 @@
 using SadPSX.Core;
+using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
 using SadPSX.Core.Memory;
 using Xunit;
@@ -137,5 +138,37 @@ public sealed class TraceLoggerTests
 
         Assert.Equal(2, lineCount);
         Assert.Contains("addiu", output);
+    }
+
+    [Fact]
+    public void UnmappedFetchIsTracedAndHandledByTheCpu()
+    {
+        var machine = new PsxMachine();
+        machine.Cpu.Reset(0xE000_0000);
+        var tracer = new TraceLogger(machine);
+
+        tracer.Step();
+
+        Assert.Single(tracer.Entries);
+        Assert.Contains("barramento", tracer.Entries[0].Disassembly);
+        Assert.Equal(
+            (uint)ExceptionCode.InstructionBusError,
+            (machine.Cpu.Cop0.Cause >> 2) & 0x1F);
+    }
+
+    [Fact]
+    public void UnalignedFetchIsTracedAndHandledByTheCpu()
+    {
+        var machine = new PsxMachine();
+        machine.Cpu.Reset(0x0000_0002);
+        var tracer = new TraceLogger(machine);
+
+        tracer.Step();
+
+        Assert.Single(tracer.Entries);
+        Assert.Contains("alinhamento", tracer.Entries[0].Disassembly);
+        Assert.Equal(
+            (uint)ExceptionCode.AddressErrorLoad,
+            (machine.Cpu.Cop0.Cause >> 2) & 0x1F);
     }
 }

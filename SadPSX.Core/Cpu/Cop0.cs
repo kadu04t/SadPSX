@@ -14,11 +14,18 @@ public sealed class Cop0
     private const int RegisterCount = 32;
 
     // Índices dos registradores COP0 relevantes dentro do banco de 32.
+    private const int BadVaddrIndex = 8;
     private const int StatusIndex = 12;
     private const int CauseIndex = 13;
     private const int EpcIndex = 14;
 
     private readonly uint[] _registers = new uint[RegisterCount];
+
+    public uint BadVaddr
+    {
+        get => _registers[BadVaddrIndex];
+        set => _registers[BadVaddrIndex] = value;
+    }
 
     /// <summary>
     /// Status Register (SR, registrador 12). Controla o modo de operação
@@ -65,6 +72,11 @@ public sealed class Cop0
     {
         ValidateRegisterIndex(index);
         _registers[index] = value;
+    }
+
+    public void Reset()
+    {
+        Array.Clear(_registers);
     }
 
     private static void ValidateRegisterIndex(int index)
@@ -130,9 +142,8 @@ public sealed class Cop0
     public void ReturnFromException()
     {
         uint sr = Sr;
-        uint stack = sr & 0x3F;
-        stack >>= 2;
-        Sr = (sr & ~0x3Fu) | stack;
+        uint restoredCurrentAndPrevious = (sr >> 2) & 0x0F;
+        Sr = (sr & ~0x0Fu) | restoredCurrentAndPrevious;
     }
 }
 
@@ -146,6 +157,8 @@ public enum ExceptionCode : uint
     Interrupt = 0x00,
     AddressErrorLoad = 0x04,
     AddressErrorStore = 0x05,
+    InstructionBusError = 0x06,
+    DataBusError = 0x07,
     Syscall = 0x08,
     Breakpoint = 0x09,
     ReservedInstruction = 0x0A,
