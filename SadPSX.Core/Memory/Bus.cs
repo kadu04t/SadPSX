@@ -29,7 +29,7 @@ public sealed class Bus
     private const uint ScratchpadSize = Scratchpad.SizeInBytes;
 
     private const uint IoPortsBase = 0x1F80_1000;
-    private const uint IoPortsSize = 0x1000; // 8 KiB
+    private const uint IoPortsSize = 0x1000; // 4 KiB (psx-spx atual; fontes mais antigas citam 8K, mas 4K evita sobreposição com Expansion 2)
 
     private const uint Expansion2Base = 0x1F80_2000;
     private const uint Expansion2Size = 0x2000; // 8 KiB
