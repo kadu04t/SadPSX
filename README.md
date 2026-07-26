@@ -24,7 +24,7 @@ O SadPSX já consegue:
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
 - Responder aos handshakes básicos da GPU e da SPU.
-- Executar DMA2 para a GPU e DMA6 para tabelas OTC.
+- Executar DMA2 temporizado para a GPU e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
 - Consultar um controle digital pelo SIO0 e usar teclado ou gamepad SDL3.
@@ -107,8 +107,9 @@ bus error e IRQ3. Os caminhos funcionais atuais são:
 
 - DMA0 por blocos da RAM para o MDEC.
 - DMA1 por blocos do MDEC para a RAM.
-- DMA2 em modo manual ou por blocos entre RAM e GPU.
-- DMA2 em linked-list para envio de listas de comandos GP0.
+- DMA2 incremental em modo manual ou por blocos entre RAM e GPU, respeitando
+  direção, DREQ, estado ocupado e atualização de `MADR`/`BCR`.
+- DMA2 linked-list processado por nós para envio de listas de comandos GP0.
 - DMA3 por blocos do FIFO do CD-ROM para a RAM.
 - DMA4 por blocos entre RAM e SPU.
 - DMA6/OTC para criação reversa da ordering table.
@@ -140,7 +141,9 @@ CPU↔VRAM, polígonos, linhas, polylines e retângulos flat, Gouraud e
 texturizados, incluindo CLUT de 4/8 bits, texturas de 15 bits, clipping,
 offset de desenho, texture window, flips de sprites, máscara e
 semitransparência por texel. Polígonos usam a regra top-left e dithering 4x4
-para Gouraud e modulação.
+para Gouraud e modulação. Primitivas que excedem os limites físicos são
+descartadas, e `Texpage` e os bits de prontidão de `GPUSTAT` acompanham o
+estado do parser usado pelo DMA2.
 
 O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
 scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
@@ -443,7 +446,8 @@ O SadPSX ainda não possui:
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA do canal PIO.
-- Chopping, contenção de barramento e duração assíncrona das transferências DMA.
+- Chopping, arbitragem entre canais, contenção de barramento e timing dos
+  canais DMA além do DMA2.
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.

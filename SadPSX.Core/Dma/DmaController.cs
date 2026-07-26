@@ -8,7 +8,7 @@ using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Dma;
 
-public sealed class DmaController : IMmioDevice
+public sealed class DmaController : IMmioDevice, IClockedDevice
 {
     public const uint ChannelBaseAddress = 0x1F80_1080;
     public const uint ControlAddress = 0x1F80_10F0;
@@ -58,6 +58,7 @@ public sealed class DmaController : IMmioDevice
     private Ram _ram;
     private uint _control;
     private uint _interrupt;
+    private GpuTransferState? _gpuTransfer;
 
     public DmaController(
         InterruptController interruptController,
@@ -104,7 +105,29 @@ public sealed class DmaController : IMmioDevice
 
         _control = ResetControl;
         _interrupt = 0;
+        _gpuTransfer = null;
         CompletedTransfers = 0;
+    }
+
+    public void Tick(uint cycles)
+    {
+        if (_gpuTransfer is null)
+        {
+            TryStartChannel(GpuChannel);
+            if (_gpuTransfer is null)
+                return;
+        }
+
+        for (uint cycle = 0;
+             cycle < cycles && _gpuTransfer is not null;
+             cycle++)
+        {
+            bool transferred = _gpuTransfer.LinkedList
+                ? TickGpuLinkedList()
+                : TickGpuBlock();
+            if (!transferred)
+                break;
+        }
     }
 
     public bool Handles(uint address)
@@ -321,8 +344,10 @@ public sealed class DmaController : IMmioDevice
                 break;
 
             case GpuChannel:
-                TransferGpu(state, channelControl, synchronizationMode);
-                CompleteChannel(channel);
+                BeginGpuTransfer(
+                    state,
+                    channelControl,
+                    synchronizationMode);
                 break;
 
             case CdRomChannel:
@@ -454,11 +479,14 @@ public sealed class DmaController : IMmioDevice
             channel.BlockControl &= 0x0000_FFFF;
     }
 
-    private void TransferGpu(
+    private void BeginGpuTransfer(
         ChannelState channel,
         uint channelControl,
         uint synchronizationMode)
     {
+        if (_gpuTransfer is not null)
+            return;
+
         bool fromRam = (channelControl & 1) != 0;
         bool decrement = (channelControl & 2) != 0;
 
@@ -470,49 +498,103 @@ public sealed class DmaController : IMmioDevice
                 return;
             }
 
-            TransferGpuLinkedList(channel);
+            _gpuTransfer = new GpuTransferState
+            {
+                LinkedList = true,
+                FromRam = true,
+                CurrentAddress = channel.BaseAddress & DmaAddressMask,
+                HeaderPending = true,
+            };
             return;
         }
 
-        ulong wordCount = GetWordCount(channel.BlockControl, synchronizationMode);
+        uint blockSize = DecodeCount((ushort)channel.BlockControl);
+        uint blockCount = synchronizationMode == 0
+            ? 1
+            : DecodeCount((ushort)(channel.BlockControl >> 16));
+        ulong wordCount = (ulong)blockSize * blockCount;
         if (wordCount > MaximumTransferWords)
         {
             SignalBusError();
+            CompleteChannel(GpuChannel);
             return;
         }
 
-        uint address = channel.BaseAddress & DmaAddressMask;
-        uint step = decrement ? unchecked((uint)-4) : 4;
-
-        for (ulong word = 0; word < wordCount; word++)
+        _gpuTransfer = new GpuTransferState
         {
-            if (!IsRamDmaAddress(address))
+            FromRam = fromRam,
+            CurrentAddress = channel.BaseAddress & DmaAddressMask,
+            AddressStep = decrement ? unchecked((uint)-4) : 4,
+            SynchronizationMode = synchronizationMode,
+            BlockSize = blockSize,
+            BlocksRemaining = blockCount,
+            Forced = synchronizationMode == 0 &&
+                     (channelControl & TriggerBit) != 0,
+        };
+    }
+
+    private bool TickGpuBlock()
+    {
+        GpuTransferState transfer = _gpuTransfer!;
+        ChannelState channel = _channels[GpuChannel];
+
+        if (transfer.WordsInBlockRemaining == 0)
+        {
+            if (transfer.BlocksRemaining == 0)
             {
-                SignalBusError();
-                break;
+                CompleteChannel(GpuChannel);
+                return false;
             }
 
-            if (fromRam)
-            {
-                _gpu.Write32(
-                    GpuDevice.Gp0Address,
-                    _ram.Read32(address & RamAddressMask));
-            }
-            else
-            {
-                _ram.Write32(
-                    address & RamAddressMask,
-                    _gpu.Read32(GpuDevice.Gp0Address));
-            }
+            if (!transfer.Forced && !GpuDmaRequestAsserted(transfer.FromRam))
+                return false;
 
-            address = (address + step) & DmaAddressMask;
+            transfer.Forced = false;
+            channel.ChannelControl &= ~TriggerBit;
+            transfer.WordsInBlockRemaining = transfer.BlockSize;
         }
 
-        if (synchronizationMode == 1)
+        if (!IsRamDmaAddress(transfer.CurrentAddress))
         {
-            channel.BaseAddress = address & 0x00FF_FFFF;
-            channel.BlockControl &= 0x0000_FFFF;
+            AbortGpuTransfer();
+            return false;
         }
+
+        if (transfer.FromRam)
+        {
+            _gpu.Write32(
+                GpuDevice.Gp0Address,
+                _ram.Read32(transfer.CurrentAddress & RamAddressMask));
+        }
+        else
+        {
+            _ram.Write32(
+                transfer.CurrentAddress & RamAddressMask,
+                _gpu.Read32(GpuDevice.Gp0Address));
+        }
+
+        transfer.CurrentAddress =
+            (transfer.CurrentAddress + transfer.AddressStep) & DmaAddressMask;
+        transfer.WordsInBlockRemaining--;
+
+        if (transfer.SynchronizationMode == 1)
+            channel.BaseAddress = transfer.CurrentAddress & 0x00FF_FFFF;
+
+        if (transfer.WordsInBlockRemaining != 0)
+            return true;
+
+        transfer.BlocksRemaining--;
+        if (transfer.SynchronizationMode == 1)
+        {
+            channel.BlockControl =
+                (channel.BlockControl & 0x0000_FFFF) |
+                (transfer.BlocksRemaining << 16);
+        }
+
+        if (transfer.BlocksRemaining == 0)
+            CompleteChannel(GpuChannel);
+
+        return true;
     }
 
     private void TransferSpu(
@@ -559,48 +641,86 @@ public sealed class DmaController : IMmioDevice
             channel.BlockControl &= 0x0000_FFFF;
     }
 
-    private void TransferGpuLinkedList(ChannelState channel)
+    private bool TickGpuLinkedList()
     {
-        uint nodeAddress = channel.BaseAddress & DmaAddressMask;
-        ulong transferredWords = 0;
+        GpuTransferState transfer = _gpuTransfer!;
+        ChannelState channel = _channels[GpuChannel];
 
-        while (true)
+        if (transfer.HeaderPending)
         {
-            if (!IsRamDmaAddress(nodeAddress) ||
-                transferredWords >= MaximumTransferWords)
+            if (!GpuDmaRequestAsserted(fromRam: true))
+                return false;
+
+            if (!IsRamDmaAddress(transfer.CurrentAddress) ||
+                transfer.TransferredWords >= MaximumTransferWords)
             {
-                SignalBusError();
-                break;
+                AbortGpuTransfer();
+                return false;
             }
 
-            uint header = _ram.Read32(nodeAddress & RamAddressMask);
-            uint commandCount = header >> 24;
-            uint commandAddress = (nodeAddress + 4) & DmaAddressMask;
+            uint header = _ram.Read32(
+                transfer.CurrentAddress & RamAddressMask);
+            transfer.CommandsRemaining = header >> 24;
+            transfer.CommandAddress =
+                (transfer.CurrentAddress + 4) & DmaAddressMask;
+            transfer.NextAddress = header & 0x00FF_FFFF;
+            transfer.HeaderPending = false;
+            transfer.TransferredWords++;
+            channel.ChannelControl &= ~TriggerBit;
 
-            for (uint command = 0; command < commandCount; command++)
-            {
-                if (!IsRamDmaAddress(commandAddress))
-                {
-                    SignalBusError();
-                    return;
-                }
+            if (transfer.CommandsRemaining == 0)
+                FinishGpuLinkedListNode(channel, transfer);
 
-                _gpu.Write32(
-                    GpuDevice.Gp0Address,
-                    _ram.Read32(commandAddress & RamAddressMask));
-                commandAddress = (commandAddress + 4) & DmaAddressMask;
-                transferredWords++;
-            }
-
-            uint nextAddress = header & 0x00FF_FFFF;
-            channel.BaseAddress = nextAddress;
-            transferredWords++;
-
-            if ((nextAddress & 0x0080_0000) != 0)
-                break;
-
-            nodeAddress = nextAddress & DmaAddressMask;
+            return true;
         }
+
+        if (!IsRamDmaAddress(transfer.CommandAddress) ||
+            transfer.TransferredWords >= MaximumTransferWords)
+        {
+            AbortGpuTransfer();
+            return false;
+        }
+
+        _gpu.Write32(
+            GpuDevice.Gp0Address,
+            _ram.Read32(transfer.CommandAddress & RamAddressMask));
+        transfer.CommandAddress =
+            (transfer.CommandAddress + 4) & DmaAddressMask;
+        transfer.CommandsRemaining--;
+        transfer.TransferredWords++;
+
+        if (transfer.CommandsRemaining == 0)
+            FinishGpuLinkedListNode(channel, transfer);
+
+        return true;
+    }
+
+    private void FinishGpuLinkedListNode(
+        ChannelState channel,
+        GpuTransferState transfer)
+    {
+        channel.BaseAddress = transfer.NextAddress;
+        if ((transfer.NextAddress & 0x0080_0000) != 0)
+        {
+            CompleteChannel(GpuChannel);
+            return;
+        }
+
+        transfer.CurrentAddress = transfer.NextAddress & DmaAddressMask;
+        transfer.HeaderPending = true;
+    }
+
+    private bool GpuDmaRequestAsserted(bool fromRam)
+    {
+        return fromRam
+            ? _gpu.DmaDirection == 2 && _gpu.CanReceiveDmaBlock
+            : _gpu.DmaDirection == 3 && _gpu.CanSendVramToCpu;
+    }
+
+    private void AbortGpuTransfer()
+    {
+        SignalBusError();
+        CompleteChannel(GpuChannel);
     }
 
     private void TransferOtc(
@@ -637,6 +757,8 @@ public sealed class DmaController : IMmioDevice
     {
         ChannelState state = _channels[channel];
         state.ChannelControl &= ~(BusyBit | TriggerBit);
+        if (channel == GpuChannel)
+            _gpuTransfer = null;
         CompletedTransfers++;
 
         uint channelInterruptEnable = 1u << (16 + channel);
@@ -762,6 +884,24 @@ public sealed class DmaController : IMmioDevice
             BlockControl = 0;
             ChannelControl = 0;
         }
+    }
+
+    private sealed class GpuTransferState
+    {
+        public bool LinkedList;
+        public bool FromRam;
+        public bool Forced;
+        public bool HeaderPending;
+        public uint SynchronizationMode;
+        public uint CurrentAddress;
+        public uint AddressStep;
+        public uint BlockSize;
+        public uint BlocksRemaining;
+        public uint WordsInBlockRemaining;
+        public uint CommandAddress;
+        public uint CommandsRemaining;
+        public uint NextAddress;
+        public ulong TransferredWords;
     }
 }
 

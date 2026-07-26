@@ -32,6 +32,7 @@ public sealed class PsxMachine
         RegisterClockedDevice(Bus.CdRom);
         RegisterClockedDevice(Bus.Spu);
         RegisterClockedDevice(Bus.Sio0);
+        RegisterClockedDevice(Bus.Dma);
     }
 
     public PsxMachine(SystemBus bus)
@@ -43,6 +44,7 @@ public sealed class PsxMachine
         RegisterClockedDevice(Bus.CdRom);
         RegisterClockedDevice(Bus.Spu);
         RegisterClockedDevice(Bus.Sio0);
+        RegisterClockedDevice(Bus.Dma);
     }
 
     /// <summary>

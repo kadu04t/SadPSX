@@ -55,6 +55,7 @@ public sealed class DmaControllerTests
         bus.Write32(ChannelRegister(2, 4), 0x0001_0002);
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+        bus.Dma.Tick(2);
 
         Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
         Assert.Equal(0xE600_0003u, bus.Gpu.LastGp0Command);
@@ -76,6 +77,7 @@ public sealed class DmaControllerTests
         bus.Write32(ChannelRegister(2, 4), 0x0001_0004);
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+        bus.Dma.Tick(4);
 
         Assert.Equal(0x1234u, bus.Gpu.Vram.ReadPixel(11, 12));
         Assert.Equal(0x4321u, bus.Gpu.Vram.ReadPixel(12, 12));
@@ -93,6 +95,7 @@ public sealed class DmaControllerTests
         bus.Write32(ChannelRegister(2, 0), 0x100);
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0401);
+        bus.Dma.Tick(3);
 
         Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
         Assert.Equal(0x0080_0000u, bus.Dma.GetChannel(2).BaseAddress);
@@ -136,6 +139,58 @@ public sealed class DmaControllerTests
     }
 
     [Fact]
+    public void GpuDmaWaitsForDirectionAndCompletesIncrementally()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Ram.Write32(0x100, 0xE100_0123);
+        bus.Ram.Write32(0x104, 0xE600_0003);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0002);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        bus.Dma.Tick(4);
+
+        Assert.Equal(0ul, bus.Gpu.Gp0CommandCount);
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Dma.Tick(1);
+
+        Assert.Equal(1ul, bus.Gpu.Gp0CommandCount);
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
+    public void GpuBurstKeepsBaseAddressAfterCompletion()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Ram.Write32(0x100, 0xE100_0123);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 1);
+        bus.Write32(ChannelRegister(2, 8), 0x1100_0001);
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(0x100u, bus.Dma.GetChannel(2).BaseAddress);
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
     public void OutOfRangeTransferSetsBusErrorAndMasterFlag()
     {
         var bus = new Bus();
@@ -144,6 +199,7 @@ public sealed class DmaControllerTests
         bus.Write32(ChannelRegister(2, 4), 1);
 
         bus.Write32(ChannelRegister(2, 8), 0x1100_0001);
+        bus.Dma.Tick(1);
 
         uint interrupt = bus.Read32(DmaController.InterruptAddress);
         Assert.NotEqual(0u, interrupt & (1u << 15));
