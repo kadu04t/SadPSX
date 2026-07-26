@@ -50,7 +50,7 @@ public sealed class RuntimeDiagnosticsTests
         var machine = new PsxMachine();
         using var diagnostics = new RuntimeDiagnostics(machine);
 
-        machine.Bus.Read32(0x1F80_1040);
+        machine.Bus.Read32(0x1F80_1050);
         RuntimeDiagnosticSnapshot snapshot = diagnostics.Capture();
 
         Assert.Equal(1ul, snapshot.UnhandledMmioAccesses);

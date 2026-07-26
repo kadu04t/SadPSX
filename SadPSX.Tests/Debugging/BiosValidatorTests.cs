@@ -58,7 +58,7 @@ public sealed class BiosValidatorTests
     {
         var machine = CreateMachineWithBios(
             0x3C08_1F80,
-            0x8D09_1040);
+            0x8D09_1050);
 
         BiosValidationResult result = BiosValidator.Run(machine, 2);
 

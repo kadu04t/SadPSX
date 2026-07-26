@@ -31,6 +31,7 @@ public sealed class PsxMachine
         RegisterClockedDevice(Bus.RootCounters);
         RegisterClockedDevice(Bus.CdRom);
         RegisterClockedDevice(Bus.Spu);
+        RegisterClockedDevice(Bus.Sio0);
     }
 
     public PsxMachine(SystemBus bus)
@@ -41,6 +42,7 @@ public sealed class PsxMachine
         RegisterClockedDevice(Bus.RootCounters);
         RegisterClockedDevice(Bus.CdRom);
         RegisterClockedDevice(Bus.Spu);
+        RegisterClockedDevice(Bus.Sio0);
     }
 
     /// <summary>
@@ -137,6 +139,8 @@ public sealed class PsxMachine
     public void Reset()
     {
         Bus.InterruptController.Reset();
+        Bus.Sio0.Reset();
+        Bus.PostStatus.Reset();
         Bus.CdRom.Reset();
         Bus.Dma.Reset();
         Bus.RootCounters.Reset();

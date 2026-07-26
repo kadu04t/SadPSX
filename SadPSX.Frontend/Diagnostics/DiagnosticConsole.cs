@@ -1,4 +1,5 @@
 using SadPSX.Core;
+using SadPSX.Core.Bios;
 using SadPSX.Core.Bus;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
@@ -16,6 +17,7 @@ internal sealed class DiagnosticConsole : IDisposable
     ];
 
     private readonly RuntimeDiagnostics _diagnostics;
+    private readonly PostStatusRegister _postStatus;
     private readonly StreamWriter? _logWriter;
     private readonly HashSet<uint> _observedProgramCounters = [];
 
@@ -31,7 +33,9 @@ internal sealed class DiagnosticConsole : IDisposable
     public DiagnosticConsole(PsxMachine machine)
     {
         _diagnostics = new RuntimeDiagnostics(machine);
+        _postStatus = machine.Bus.PostStatus;
         _diagnostics.UnexpectedExceptionOccurred += OnUnexpectedException;
+        _postStatus.ValueChanged += OnPostStatusChanged;
         _logWriter = CreateLogWriter(out string? logPath);
 
         WriteHeader("Console de diagnóstico iniciado");
@@ -211,6 +215,7 @@ internal sealed class DiagnosticConsole : IDisposable
             return;
 
         _diagnostics.UnexpectedExceptionOccurred -= OnUnexpectedException;
+        _postStatus.ValueChanged -= OnPostStatusChanged;
         _diagnostics.Dispose();
         _logWriter?.Dispose();
         _disposed = true;
@@ -239,6 +244,18 @@ internal sealed class DiagnosticConsole : IDisposable
         WriteRaw(
             $"DMA    transferências={snapshot.DmaTransfers}  " +
             $"MMIO não tratado={snapshot.UnhandledMmioAccesses}");
+        WriteRaw(
+            $"Boot   POST=0x{snapshot.PostStatus:X2} " +
+            $"(escritas={snapshot.PostWriteCount})  " +
+            $"SIO0_CTRL=0x{snapshot.Sio0Control:X4} " +
+            $"RX={snapshot.Sio0ReceiveBytes}");
+    }
+
+    private void OnPostStatusChanged(byte value)
+    {
+        Write(
+            DiagnosticLevel.Info,
+            $"BIOS POST avançou para 0x{value:X2}.");
     }
 
     private void OnUnexpectedException(CpuExceptionInfo exception)

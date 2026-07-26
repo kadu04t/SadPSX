@@ -65,6 +65,10 @@ public sealed class RuntimeDiagnostics : IDisposable
             _machine.Bus.CdRom.InterruptFlags,
             _machine.Bus.CdRom.DataCount,
             _machine.Bus.Dma.CompletedTransfers,
+            _machine.Bus.PostStatus.Value,
+            _machine.Bus.PostStatus.WriteCount,
+            _machine.Bus.Sio0.Control,
+            _machine.Bus.Sio0.ReceiveCount,
             unhandledMmioAccesses,
             _machine.Bus.Mmio.LastUnhandledReadAddress,
             _machine.Bus.Mmio.LastUnhandledWriteAddress);
@@ -135,6 +139,10 @@ public readonly record struct RuntimeDiagnosticSnapshot(
     byte CdRomInterruptFlags,
     int CdRomDataBytes,
     ulong DmaTransfers,
+    byte PostStatus,
+    ulong PostWriteCount,
+    ushort Sio0Control,
+    int Sio0ReceiveBytes,
     ulong UnhandledMmioAccesses,
     uint? LastUnhandledMmioRead,
     uint? LastUnhandledMmioWrite);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SadPSX.Core;
+using SadPSX.Core.Controllers;
 using SadPSX.Frontend.Diagnostics;
 using SadPSX.Frontend.Video;
 using SDL3;
@@ -162,11 +163,49 @@ internal sealed class FrontendApplication : IDisposable
                     _running = false;
                     break;
 
-                case SDL.EventType.KeyDown
-                    when !currentEvent.Key.Repeat:
-                    HandleKey(currentEvent.Key.Scancode);
+                case SDL.EventType.KeyDown:
+                    HandleControllerKey(
+                        currentEvent.Key.Scancode,
+                        pressed: true);
+                    if (!currentEvent.Key.Repeat)
+                        HandleKey(currentEvent.Key.Scancode);
+                    break;
+
+                case SDL.EventType.KeyUp:
+                    HandleControllerKey(
+                        currentEvent.Key.Scancode,
+                        pressed: false);
                     break;
             }
+        }
+    }
+
+    private void HandleControllerKey(SDL.Scancode scancode, bool pressed)
+    {
+        ControllerButton? button = scancode switch
+        {
+            SDL.Scancode.Up => ControllerButton.Up,
+            SDL.Scancode.Right => ControllerButton.Right,
+            SDL.Scancode.Down => ControllerButton.Down,
+            SDL.Scancode.Left => ControllerButton.Left,
+            SDL.Scancode.Return => ControllerButton.Start,
+            SDL.Scancode.Backspace => ControllerButton.Select,
+            SDL.Scancode.Z => ControllerButton.Cross,
+            SDL.Scancode.X => ControllerButton.Circle,
+            SDL.Scancode.A => ControllerButton.Square,
+            SDL.Scancode.S => ControllerButton.Triangle,
+            SDL.Scancode.Q => ControllerButton.L1,
+            SDL.Scancode.W => ControllerButton.R1,
+            SDL.Scancode.E => ControllerButton.L2,
+            SDL.Scancode.D => ControllerButton.R2,
+            _ => null,
+        };
+
+        if (button is ControllerButton mappedButton)
+        {
+            _machine.Bus.Sio0.ControllerPort1.SetButton(
+                mappedButton,
+                pressed);
         }
     }
 
@@ -243,6 +282,13 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine($"Lote de instruções: {_instructionBatchSize}");
         Console.WriteLine();
         Console.WriteLine("Controles:");
+        Console.WriteLine("  Setas   Direcional");
+        Console.WriteLine("  Z/X     Cruz/Círculo");
+        Console.WriteLine("  A/S     Quadrado/Triângulo");
+        Console.WriteLine("  Q/W     L1/R1");
+        Console.WriteLine("  E/D     L2/R2");
+        Console.WriteLine("  Enter   Start");
+        Console.WriteLine("  Backsp. Select");
         Console.WriteLine("  Espaço  Pausar/continuar");
         Console.WriteLine("  R       Reiniciar console");
         Console.WriteLine("  F1      Estado geral");

@@ -19,6 +19,7 @@ O SadPSX já consegue:
 - Executar branch e jump delay slots.
 - Aplicar load delay em loads e `MFC0`.
 - Executar `LWL`, `LWR`, `SWL` e `SWR`.
+- Transferir dados pelo COP2 e executar comandos geométricos essenciais da GTE.
 - Processar exceções através do COP0.
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
@@ -26,6 +27,8 @@ O SadPSX já consegue:
 - Executar DMA2 para a GPU e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
+- Consultar um controle digital pelo SIO0 e usar o teclado como entrada.
+- Exibir o progresso POST da BIOS no console de diagnóstico.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
@@ -34,9 +37,8 @@ O SadPSX já consegue:
 
 Na validação atual, a BIOS SCPH-1001 executa pelo menos 20.000.000 de
 instruções sem exceções inesperadas, usa DMA2/DMA6, recebe interrupções de
-VBlank e alcança 7.474 PCs únicos. Dos 64.754 acessos MMIO, somente 15 ainda
-não são tratados, todos na Expansion Region 2. Isso ainda não representa um
-boot visual completo.
+VBlank e alcança 7.474 PCs únicos. Os 64.754 acessos MMIO observados nessa
+execução são tratados. Isso ainda não representa um boot completo de jogo.
 
 ## Componentes implementados
 
@@ -54,7 +56,12 @@ A implementação interpretada do R3000A inclui:
 - Branch delay e load delay.
 - Registradores `HI`, `LO` e `$zero`.
 
-As principais instruções ainda não implementadas são as operações do GTE/COP2.
+### GTE/COP2
+
+O COP2 implementa `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2` e `SWC2`, incluindo
+load delay nas transferências para a CPU. A GTE possui FIFOs e semântica dos
+registradores de dados/controle, além dos comandos `RTPS`, `RTPT`, `NCLIP`,
+`OP`, `MVMVA`, `SQR`, `AVSZ3` e `AVSZ4`.
 
 ### COP0
 
@@ -148,9 +155,10 @@ O barramento implementa as seguintes regiões:
 | Expansion Region 1 | `0x1F000000-0x1F7FFFFF` | Stub com leituras `0xFF` |
 | Scratchpad | `0x1F800000-0x1F8003FF` | Implementado |
 | I/O Ports | `0x1F801000-0x1F801FFF` | Parcial |
-| Expansion Region 2 | `0x1F802000-0x1F803FFF` | Stub |
+| Expansion Region 2 | `0x1F802000-0x1F803FFF` | POST da BIOS; restante em stub |
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
+| SIO0 | `0x1F801040-0x1F80104F` | Controle digital, timing e IRQ7 |
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
 | DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA3/DMA6 funcionais |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
@@ -219,6 +227,14 @@ Atalhos de diagnóstico:
 - `F2`: instrução atual e registradores da CPU.
 - `F3`: acessos MMIO ainda não implementados.
 - `F4`: exceções recentes da CPU.
+
+A entrada do controle digital usa:
+
+- Setas: direcional.
+- `Z`/`X`: cruz/círculo.
+- `A`/`S`: quadrado/triângulo.
+- `Q`/`W`: L1/R1; `E`/`D`: L2/R2.
+- `Enter`: Start; `Backspace`: Select.
 
 A emulação roda continuamente e a primeira tela da BIOS pode levar algum tempo
 para aparecer enquanto o interpretador executa a inicialização. Atalhos:
@@ -320,6 +336,7 @@ Os testes cobrem:
 - Loads, stores e load delay.
 - Loads e stores desalinhados em todos os offsets.
 - Exceções e registradores do COP0.
+- Transferências COP2, registradores e comandos geométricos da GTE.
 - Proteção entre modo usuário e segmentos do kernel.
 - Contabilização de ciclos e sincronização de dispositivos.
 - Controlador de interrupções e entrega ao COP0.
@@ -329,6 +346,7 @@ Os testes cobrem:
 - Timing NTSC/PAL, dotclock, HBlank, VBlank e IRQ0.
 - DMA2 por blocos/linked-list, DMA6/OTC e IRQ3.
 - Registradores, status, FIFO e RAM de som da SPU.
+- SIO0, protocolo do controle digital, IRQ e POST da BIOS.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
@@ -342,6 +360,7 @@ Os testes cobrem:
 SadPSX/
 ├── SadPSX.Core/
 │   ├── Cpu/          # R3000A, COP0 e decodificação
+│   ├── Gte/          # COP2 e Geometry Transformation Engine
 │   ├── Gpu/          # Interface e estado da GPU
 │   ├── Memory/       # RAM, scratchpad e regiões de memória
 │   ├── Bus/          # Barramento e roteamento MMIO
@@ -360,7 +379,9 @@ SadPSX/
 │   ├── Cpu/          # Testes da CPU
 │   ├── Memory/       # Testes de memória e MMIO
 │   ├── Gpu/          # Testes da GPU
-│   └── Dma/          # Testes de DMA
+│   ├── Dma/          # Testes de DMA
+│   ├── Gte/          # Testes da GTE e COP2
+│   └── Controllers/  # Testes do SIO0 e controle digital
 ├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
 ├── scripts/          # Validação automatizada
 └── SadPSX.slnx
@@ -375,11 +396,11 @@ O SadPSX ainda não possui:
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA dos canais MDEC, SPU e PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
-- GTE/COP2.
+- Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Execução de executáveis e sistema de arquivos ISO9660 a partir do CD-ROM.
 - Síntese da SPU e saída de áudio.
 - MDEC.
-- Controles e memory cards.
+- Controles analógicos, gamepads do host e memory cards.
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 
@@ -389,10 +410,9 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-Os próximos componentes naturais são GTE/COP2 e controles. A GTE desbloqueia a
-geometria 3D usada pelos jogos, enquanto SIO0 e o controle digital permitem
-interagir com menus assim que o boot pelo CD-ROM avançar. Depois, memory cards,
-síntese da SPU e MDEC completam os subsistemas mais visíveis.
+Os próximos passos naturais são completar os comandos de iluminação/cor da GTE,
+avançar o boot de discos com ISO9660/EXE e adicionar memory cards. Depois,
+síntese da SPU, saída de áudio e MDEC completam os subsistemas mais visíveis.
 
 ## Licença
 
