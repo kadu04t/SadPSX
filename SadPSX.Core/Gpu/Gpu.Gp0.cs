@@ -170,9 +170,8 @@ public sealed partial class Gpu
         switch ((byte)(commandWord >> 24))
         {
             case 0xE1:
-                _status = (_status & ~0x0000_07FFu) |
-                          (commandWord & 0x0000_07FFu);
                 _internalRegisters[0] = commandWord & 0x0000_3FFFu;
+                ApplyTexturePageStatus(_internalRegisters[0]);
                 break;
 
             case 0xE2:
@@ -359,8 +358,28 @@ public sealed partial class Gpu
 
     private void FinishGp0Word()
     {
-        _status |= ReadyForCommandBit | ReadyForDmaBlockBit;
+        bool collectingPacket = _gp0Packet.Count > 0;
+        if (!collectingPacket && !_cpuToVramActive)
+            _status |= ReadyForCommandBit;
+        else
+            _status &= ~ReadyForCommandBit;
+
+        bool acceptsDmaBlock =
+            _cpuToVramActive ||
+            !collectingPacket ||
+            !IsPolygonOrLinePacket(_gp0Packet[0]);
+        if (acceptsDmaBlock)
+            _status |= ReadyForDmaBlockBit;
+        else
+            _status &= ~ReadyForDmaBlockBit;
+
         UpdateDmaRequest();
+    }
+
+    private static bool IsPolygonOrLinePacket(uint commandWord)
+    {
+        int group = (int)(commandWord >> 29);
+        return group is 1 or 2;
     }
 
     private void ResetPacketCollection()

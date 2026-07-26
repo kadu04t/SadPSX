@@ -304,6 +304,37 @@ public sealed class Gp0CommandTests
     }
 
     [Fact]
+    public void OversizedPolygonIsDiscarded()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+
+        SendGp0(
+            gpu,
+            0x2000_00FF,
+            PackPosition(-600, 10),
+            PackPosition(600, 10),
+            PackPosition(0, 100));
+
+        Assert.Equal(0u, gpu.Vram.ReadPixel(0, 20));
+    }
+
+    [Fact]
+    public void OversizedLineIsDiscarded()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+
+        SendGp0(
+            gpu,
+            0x4000_00FF,
+            PackPosition(10, -300),
+            PackPosition(10, 300));
+
+        Assert.Equal(0u, gpu.Vram.ReadPixel(10, 10));
+    }
+
+    [Fact]
     public void TexturedTransparencyDependsOnTexelMaskBit()
     {
         var gpu = CreateGpu();

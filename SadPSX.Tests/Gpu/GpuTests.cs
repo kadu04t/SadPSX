@@ -52,6 +52,17 @@ public sealed class GpuTests
     }
 
     [Fact]
+    public void DrawModeMapsSecondTexturePageYBitToStatus()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+
+        gpu.Write32(GpuDevice.Gp0Address, 0xE100_0800);
+
+        Assert.NotEqual(0u, gpu.Status & (1u << 15));
+        Assert.Equal(0u, gpu.Status & (1u << 11));
+    }
+
+    [Fact]
     public void GpuInterruptSetsGpuStatAndInterruptController()
     {
         var interrupts = new InterruptController();

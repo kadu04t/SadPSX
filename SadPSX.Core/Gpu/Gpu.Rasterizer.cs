@@ -31,7 +31,7 @@ public sealed partial class Gpu
         int packetIndex = 1;
         int colorLookupX = 0;
         int colorLookupY = 0;
-        uint texturePage = _internalRegisters[0] & 0x1FF;
+        uint texturePage = _internalRegisters[0] & 0x9FF;
         RgbColor currentColor = DecodeRgb(commandWord);
         var vertices = new RasterVertex[vertexCount];
 
@@ -58,10 +58,10 @@ public sealed partial class Gpu
                 }
                 else if (vertexIndex == 1)
                 {
-                    texturePage = textureParameter & 0x1FF;
-                    _status = (_status & ~0x1FFu) | texturePage;
+                    texturePage = textureParameter & 0x9FF;
                     _internalRegisters[0] =
-                        (_internalRegisters[0] & ~0x1FFu) | texturePage;
+                        (_internalRegisters[0] & ~0x9FFu) | texturePage;
+                    ApplyTexturePageStatus(_internalRegisters[0]);
                 }
             }
 
@@ -71,6 +71,9 @@ public sealed partial class Gpu
                 textureU,
                 textureV);
         }
+
+        if (ExceedsPrimitiveDimensions(vertices))
+            return;
 
         DrawTriangle(
             vertices[0],
@@ -266,6 +269,12 @@ public sealed partial class Gpu
         RasterVertex end,
         bool semiTransparent)
     {
+        if (Math.Abs(end.PixelX - start.PixelX) > 1023 ||
+            Math.Abs(end.PixelY - start.PixelY) > 511)
+        {
+            return;
+        }
+
         int deltaX = Math.Abs(end.PixelX - start.PixelX);
         int deltaY = Math.Abs(end.PixelY - start.PixelY);
         int stepX = start.PixelX < end.PixelX ? 1 : -1;
@@ -367,7 +376,7 @@ public sealed partial class Gpu
                 break;
         }
 
-        uint texturePage = _internalRegisters[0] & 0x1FF;
+        uint texturePage = _internalRegisters[0] & 0x9FF;
         bool flipHorizontal = (_internalRegisters[0] & (1u << 12)) != 0;
         bool flipVertical = (_internalRegisters[0] & (1u << 13)) != 0;
 
@@ -429,7 +438,9 @@ public sealed partial class Gpu
         textureV &= 0xFF;
 
         int pageX = (int)(texturePage & 0x0F) * 64;
-        int pageY = (int)((texturePage >> 4) & 1) * 256;
+        int pageY =
+            (int)((texturePage >> 4) & 1) * 256 +
+            (int)((texturePage >> 11) & 1) * 512;
         int textureDepth = (int)((texturePage >> 7) & 3);
 
         switch (textureDepth)
@@ -600,6 +611,28 @@ public sealed partial class Gpu
     private static int SignExtend11(int value)
     {
         return (value & 0x400) != 0 ? value - 0x800 : value;
+    }
+
+    private static bool ExceedsPrimitiveDimensions(
+        IReadOnlyList<RasterVertex> vertices)
+    {
+        for (int first = 0; first < vertices.Count; first++)
+        {
+            for (int second = first + 1; second < vertices.Count; second++)
+            {
+                if (Math.Abs(
+                        vertices[second].PixelX -
+                        vertices[first].PixelX) > 1023 ||
+                    Math.Abs(
+                        vertices[second].PixelY -
+                        vertices[first].PixelY) > 511)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static RgbColor DecodeRgb(uint value)

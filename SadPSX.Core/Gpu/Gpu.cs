@@ -54,6 +54,14 @@ public sealed partial class Gpu : IMmioDevice
 
     public bool IsInterlaced => (_status & (1u << 22)) != 0;
 
+    internal uint DmaDirection => (_status >> 29) & 3;
+
+    internal bool CanReceiveDmaBlock =>
+        (_status & ReadyForDmaBlockBit) != 0;
+
+    internal bool CanSendVramToCpu =>
+        (_status & ReadyForVramReadBit) != 0;
+
     public uint DotClockDivisor
     {
         get
@@ -293,6 +301,16 @@ public sealed partial class Gpu : IMmioDevice
             _status |= DmaRequestBit;
         else
             _status &= ~DmaRequestBit;
+    }
+
+    private void ApplyTexturePageStatus(uint drawMode)
+    {
+        const uint texturePageStatusMask = 0x0000_87FF;
+        uint texturePageStatus =
+            (drawMode & 0x0000_07FF) |
+            ((drawMode & (1u << 11)) << 4);
+        _status = (_status & ~texturePageStatusMask) |
+                  texturePageStatus;
     }
 
     internal void SetVideoTimingStatus(
