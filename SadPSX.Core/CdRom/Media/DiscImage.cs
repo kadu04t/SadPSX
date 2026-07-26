@@ -11,6 +11,32 @@ public abstract class DiscImage : IDisposable
 
     public abstract void ReadSector(int logicalBlockAddress, Span<byte> destination);
 
+    public void ReadUserDataSector(
+        int logicalBlockAddress,
+        Span<byte> destination)
+    {
+        if (destination.Length < 2048)
+        {
+            throw new ArgumentException(
+                "O destino deve comportar 2048 bytes.",
+                nameof(destination));
+        }
+
+        var rawSector = new byte[RawSectorSize];
+        ReadSector(logicalBlockAddress, rawSector);
+        int offset = GetTrackAt(logicalBlockAddress).Mode switch
+        {
+            DiscTrackMode.Mode1 => 16,
+            DiscTrackMode.Mode2 => 24,
+            _ => throw new InvalidDataException(
+                "Faixas de áudio não contêm setores ISO9660."),
+        };
+        rawSector.AsSpan(offset, 2048).CopyTo(destination);
+    }
+
+    public bool TryGetBootInfo(out DiscBootInfo? bootInfo) =>
+        Iso9660DiscReader.TryGetBootInfo(this, out bootInfo);
+
     public DiscTrack GetTrack(byte number)
     {
         foreach (DiscTrack track in Tracks)

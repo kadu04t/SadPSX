@@ -10,10 +10,13 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public const uint EndAddress = 0x1F80_1803;
     public const uint SingleSpeedSectorCycles = 33_868_800 / 75;
     public const uint DoubleSpeedSectorCycles = SingleSpeedSectorCycles / 2;
+    public const uint DefaultCommandDelayCycles = 400;
+    public const uint InitializationCommandDelayCycles = 80_000;
+    public const uint SecondResponseDelayCycles = 20_000;
+    public const uint SeekResponseDelayCycles = 100_000;
 
     private const int FifoCapacity = 16;
     private const int MaximumSectorBuffers = 8;
-    private const uint CommandDelayCycles = 400;
     private const byte NoDiscStatus = 1 << 4;
 
     private readonly InterruptController _interruptController;
@@ -31,9 +34,12 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private byte _filterChannel;
     private bool _commandBusy;
     private uint _commandCyclesRemaining;
+    private ulong _clockCycles;
     private DiscImage? _disc;
     private int _pendingLogicalBlockAddress;
     private bool _reading;
+    private bool _motorOn;
+    private bool _seeking;
     private uint _readCyclesRemaining;
     private SectorBuffer? _lastSector;
 
@@ -53,10 +59,12 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public int ResultCount => _results.Count;
     public bool CommandBusy => _commandBusy;
     public bool HasDisc => _disc is not null;
+    public DiscBootInfo? BootInfo { get; private set; }
     public int DataCount => _data.Count;
     public int BufferedSectorCount => _sectorBuffers.Count;
     public bool IsReading => _reading;
     public int CurrentLogicalBlockAddress => _pendingLogicalBlockAddress;
+    public ulong CommandCount { get; private set; }
 
     public void LoadDisc(string path)
     {
@@ -68,16 +76,24 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         ArgumentNullException.ThrowIfNull(disc);
         _disc?.Dispose();
         _disc = disc;
+        BootInfo = disc.TryGetBootInfo(out DiscBootInfo? bootInfo)
+            ? bootInfo
+            : null;
         StopReading(clearBuffers: true);
         _data.Clear();
+        _motorOn = false;
+        _seeking = false;
     }
 
     public void EjectDisc()
     {
         _disc?.Dispose();
         _disc = null;
+        BootInfo = null;
         StopReading(clearBuffers: true);
         _data.Clear();
+        _motorOn = false;
+        _seeking = false;
     }
 
     public void Reset()
@@ -95,16 +111,22 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _filterChannel = 0;
         _commandBusy = false;
         _commandCyclesRemaining = 0;
+        _clockCycles = 0;
         _pendingLogicalBlockAddress = 0;
         _reading = false;
+        _motorOn = false;
+        _seeking = false;
         _readCyclesRemaining = 0;
         _lastSector = null;
         LastCommand = 0;
+        CommandCount = 0;
     }
 
     public void Tick(uint cycles)
     {
-        if (_commandBusy)
+        _clockCycles += cycles;
+
+        if (_commandBusy && _interruptFlags == 0)
         {
             if (cycles < _commandCyclesRemaining)
             {
@@ -115,11 +137,11 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 _commandCyclesRemaining = 0;
                 _commandBusy = false;
                 ExecuteCommand(LastCommand);
-                TryPresentResponse();
             }
         }
 
         TickReading(cycles);
+        TryPresentResponse();
     }
 
     public bool Handles(uint address) =>
@@ -242,11 +264,14 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
 
         LastCommand = command;
         _commandBusy = true;
-        _commandCyclesRemaining = CommandDelayCycles;
+        _commandCyclesRemaining = command is 0x0A or 0x1E
+            ? InitializationCommandDelayCycles
+            : DefaultCommandDelayCycles;
     }
 
     private void ExecuteCommand(byte command)
     {
+        CommandCount++;
         byte[] parameters = DrainParameters();
         byte status = GetStatus();
         switch (command)
@@ -256,30 +281,32 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 break;
 
             case 0x02:
-                SetLocation(parameters);
-                QueueResponse(CdRomInterruptType.Acknowledge, status);
+                if (SetLocation(parameters))
+                    QueueResponse(CdRomInterruptType.Acknowledge, status);
                 break;
 
             case 0x03:
-            case 0x07:
             case 0x0B:
             case 0x0C:
-            case 0x12:
             case 0x1C:
                 QueueResponse(CdRomInterruptType.Acknowledge, status);
                 break;
 
+            case 0x07:
+                MotorOn();
+                break;
+
             case 0x08:
+                Stop();
+                break;
+
             case 0x09:
-                StopReading(clearBuffers: false);
-                QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
-                QueueResponse(CdRomInterruptType.Complete, GetStatus());
+                Pause();
                 break;
 
             case 0x15:
             case 0x16:
-                QueueResponse(CdRomInterruptType.Acknowledge, status);
-                QueueResponse(CdRomInterruptType.Complete, status);
+                Seek(command == 0x15);
                 break;
 
             case 0x06:
@@ -289,9 +316,16 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
 
             case 0x0A:
                 StopReading(clearBuffers: true);
-                _mode = 0;
-                QueueResponse(CdRomInterruptType.Acknowledge, status);
-                QueueResponse(CdRomInterruptType.Complete, status);
+                _mode = 0x20;
+                _motorOn = _disc is not null;
+                _seeking = false;
+                QueueResponse(
+                    CdRomInterruptType.Acknowledge,
+                    GetStatus());
+                QueueResponseAfter(
+                    SecondResponseDelayCycles,
+                    CdRomInterruptType.Complete,
+                    [GetStatus()]);
                 break;
 
             case 0x0D:
@@ -331,6 +365,10 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 GetLocationPosition(status);
                 break;
 
+            case 0x12:
+                SetSession(parameters);
+                break;
+
             case 0x19:
                 ExecuteTest(parameters);
                 break;
@@ -340,8 +378,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 break;
 
             case 0x1E:
-                QueueResponse(CdRomInterruptType.Acknowledge, status);
-                QueueResponse(CdRomInterruptType.Complete, status);
+                ReadTableOfContents();
                 break;
 
             default:
@@ -361,13 +398,38 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         return value;
     }
 
-    private void SetLocation(byte[] parameters)
+    private bool SetLocation(byte[] parameters)
     {
+        if (parameters.Length != 3 ||
+            !IsValidBcd(parameters[0]) ||
+            !IsValidBcd(parameters[1]) ||
+            !IsValidBcd(parameters[2]) ||
+            parameters[1] >= 0x60 ||
+            parameters[2] >= 0x75)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(GetStatus() | 1),
+                0x10);
+            return false;
+        }
+
         int minutes = FromBcd(ParameterAt(parameters, 0));
         int seconds = FromBcd(ParameterAt(parameters, 1));
         int frames = FromBcd(ParameterAt(parameters, 2));
-        _pendingLogicalBlockAddress =
-            Math.Max(0, (minutes * 60 + seconds) * 75 + frames - 150);
+        int logicalBlockAddress =
+            (minutes * 60 + seconds) * 75 + frames - 150;
+        if (logicalBlockAddress < 0)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(GetStatus() | 1),
+                0x10);
+            return false;
+        }
+
+        _pendingLogicalBlockAddress = logicalBlockAddress;
+        return true;
     }
 
     private void StartRead()
@@ -383,9 +445,159 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
             return;
         }
 
+        _motorOn = true;
+        _seeking = false;
         _reading = true;
         _readCyclesRemaining = GetSectorInterval();
         QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
+    }
+
+    private void MotorOn()
+    {
+        byte status = GetStatus();
+        if (_disc is null)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x80);
+            return;
+        }
+
+        if (_motorOn)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x20);
+            return;
+        }
+
+        QueueResponse(CdRomInterruptType.Acknowledge, status);
+        QueueResponseAfter(
+            SecondResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [(byte)(status | (1 << 1))],
+            () => _motorOn = true);
+    }
+
+    private void Stop()
+    {
+        StopReading(clearBuffers: false);
+        _seeking = false;
+        byte status = GetStatus();
+        QueueResponse(CdRomInterruptType.Acknowledge, status);
+        QueueResponseAfter(
+            SecondResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [(byte)(status & ~(1 << 1))],
+            () =>
+            {
+                _motorOn = false;
+                _pendingLogicalBlockAddress = 0;
+            });
+    }
+
+    private void Pause()
+    {
+        byte activeStatus = GetStatus();
+        QueueResponse(CdRomInterruptType.Acknowledge, activeStatus);
+        StopReading(clearBuffers: false);
+        _seeking = false;
+        QueueResponseAfter(
+            SecondResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [GetStatus()]);
+    }
+
+    private void Seek(bool logical)
+    {
+        byte status = GetStatus();
+        if (_disc is null ||
+            (uint)_pendingLogicalBlockAddress >= _disc.SectorCount)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x80);
+            return;
+        }
+
+        if (logical &&
+            _disc.GetTrackAt(_pendingLogicalBlockAddress).Mode ==
+                DiscTrackMode.Audio)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x04);
+            return;
+        }
+
+        StopReading(clearBuffers: false);
+        _motorOn = true;
+        _seeking = true;
+        QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
+        QueueResponseAfter(
+            SeekResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [(byte)(GetStatus() & ~(1 << 6))],
+            () => _seeking = false);
+    }
+
+    private void SetSession(byte[] parameters)
+    {
+        byte status = GetStatus();
+        if (parameters.Length != 1 ||
+            parameters[0] != 1 ||
+            _disc is null)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                parameters.Length == 1 && parameters[0] == 0
+                    ? (byte)0x10
+                    : (byte)0x80);
+            return;
+        }
+
+        if (_reading)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x80);
+            return;
+        }
+
+        _motorOn = true;
+        _seeking = true;
+        QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
+        QueueResponseAfter(
+            SeekResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [(byte)(GetStatus() & ~(1 << 6))],
+            () => _seeking = false);
+    }
+
+    private void ReadTableOfContents()
+    {
+        byte status = GetStatus();
+        if (_disc is null)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x80);
+            return;
+        }
+
+        _motorOn = true;
+        QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
+        QueueResponseAfter(
+            SecondResponseDelayCycles,
+            CdRomInterruptType.Complete,
+            [GetStatus()]);
     }
 
     private void WriteRequest(byte value)
@@ -532,29 +744,27 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         QueueResponse(CdRomInterruptType.Acknowledge, status);
         if (_disc is null)
         {
-            QueueResponse(
+            QueueResponseAfter(
+                SecondResponseDelayCycles,
                 CdRomInterruptType.DiskError,
-                0x08,
-                0x40,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0);
+                [0x08, 0x40, 0, 0, 0, 0, 0, 0]);
             return;
         }
 
-        QueueResponse(
+        _motorOn = true;
+        QueueResponseAfter(
+            SecondResponseDelayCycles,
             CdRomInterruptType.Complete,
-            status,
-            0,
-            0x20,
-            0,
-            (byte)'S',
-            (byte)'C',
-            (byte)'E',
-            (byte)'A');
+            [
+                GetStatus(),
+                0,
+                0x20,
+                0,
+                (byte)'S',
+                (byte)'C',
+                (byte)'E',
+                (byte)'A',
+            ]);
     }
 
     private void ExecuteTest(byte[] parameters)
@@ -580,15 +790,33 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         CdRomInterruptType interrupt,
         params byte[] result)
     {
-        _responses.Enqueue(new Response(interrupt, result));
+        QueueResponseAfter(0, interrupt, result);
+    }
+
+    private void QueueResponseAfter(
+        uint delayCycles,
+        CdRomInterruptType interrupt,
+        byte[] result,
+        Action? onReady = null)
+    {
+        _responses.Enqueue(new Response(
+            interrupt,
+            result,
+            _clockCycles + delayCycles,
+            onReady));
     }
 
     private void TryPresentResponse()
     {
-        if (_interruptFlags != 0 || _responses.Count == 0)
+        if (_interruptFlags != 0 ||
+            !_responses.TryPeek(out Response? response) ||
+            response.ReadyAtCycle > _clockCycles)
+        {
             return;
+        }
 
-        Response response = _responses.Dequeue();
+        _responses.Dequeue();
+        response.OnReady?.Invoke();
         _results.Clear();
         foreach (byte value in response.Result)
         {
@@ -702,9 +930,13 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         if (_disc is null)
             return NoDiscStatus;
 
-        byte status = 1 << 1;
+        byte status = 0;
+        if (_motorOn)
+            status |= 1 << 1;
         if (_reading)
             status |= 1 << 5;
+        if (_seeking)
+            status |= 1 << 6;
         return status;
     }
 
@@ -713,6 +945,9 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
 
     private static byte ToBcd(int value) =>
         (byte)(((value / 10) << 4) | (value % 10));
+
+    private static bool IsValidBcd(byte value) =>
+        (value & 0x0F) < 10 && (value >> 4) < 10;
 
     private static void EnsureAligned(uint address, uint width, string operation)
     {
@@ -734,7 +969,9 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
 
     private sealed record Response(
         CdRomInterruptType Interrupt,
-        byte[] Result);
+        byte[] Result,
+        ulong ReadyAtCycle,
+        Action? OnReady);
 
     private sealed record SectorBuffer(
         int LogicalBlockAddress,

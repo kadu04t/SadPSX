@@ -240,7 +240,12 @@ internal sealed class DiagnosticConsole : IDisposable
             $"I_MASK=0x{snapshot.InterruptMask:X4}");
         WriteRaw(
             $"CD-ROM disco={(snapshot.HasDisc ? "sim" : "não")} " +
-            $"IRQ={snapshot.CdRomInterruptFlags} dados={snapshot.CdRomDataBytes} bytes");
+            $"IRQ={snapshot.CdRomInterruptFlags} " +
+            $"cmd=0x{snapshot.CdRomLastCommand:X2} " +
+            $"total={snapshot.CdRomCommands} " +
+            $"LBA={snapshot.CdRomLogicalBlockAddress} " +
+            $"lendo={(snapshot.CdRomReading ? "sim" : "não")} " +
+            $"dados={snapshot.CdRomDataBytes} bytes");
         WriteRaw(
             $"DMA    transferências={snapshot.DmaTransfers}  " +
             $"MMIO não tratado={snapshot.UnhandledMmioAccesses}");

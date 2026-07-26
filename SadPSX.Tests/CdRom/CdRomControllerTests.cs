@@ -57,6 +57,7 @@ public sealed class CdRomControllerTests
 
         SetIndex(bus, 1);
         bus.Write8(CdRomController.BaseAddress + 3, 0x1F);
+        bus.CdRom.Tick(CdRomController.SecondResponseDelayCycles);
 
         Assert.Equal((byte)CdRomInterruptType.DiskError, bus.CdRom.InterruptFlags);
         Assert.Equal(
@@ -156,6 +157,7 @@ public sealed class CdRomControllerTests
             (byte)CdRomInterruptType.Acknowledge,
             bus.CdRom.InterruptFlags);
         Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SecondResponseDelayCycles);
         Assert.Equal(
             (byte)CdRomInterruptType.Complete,
             bus.CdRom.InterruptFlags);
@@ -175,14 +177,131 @@ public sealed class CdRomControllerTests
 
         WriteCommand(bus, 0x13);
         Assert.Equal(
-            new byte[] { 0x02, 0x01, 0x02 },
+            new byte[] { 0x00, 0x01, 0x02 },
             ReadResults(bus, 3));
         Acknowledge(bus);
 
         WriteCommand(bus, 0x14, 0x02);
         Assert.Equal(
-            new byte[] { 0x02, 0x00, 0x04 },
+            new byte[] { 0x00, 0x00, 0x04 },
             ReadResults(bus, 3));
+    }
+
+    [Fact]
+    public void InitStartsMotorAndRestoresDefaultMode()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(1);
+        bus.CdRom.LoadDisc(disc);
+
+        SetIndex(bus, 0);
+        bus.Write8(CdRomController.BaseAddress + 1, 0x0A);
+        bus.CdRom.Tick(CdRomController.InitializationCommandDelayCycles);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Acknowledge,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(new byte[] { 0x02 }, ReadResults(bus, 1));
+        Assert.Equal(0x20, bus.CdRom.Mode);
+
+        Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SecondResponseDelayCycles);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Complete,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(new byte[] { 0x02 }, ReadResults(bus, 1));
+    }
+
+    [Fact]
+    public void SeekReportsBusyUntilDelayedCompletion()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(32);
+        bus.CdRom.LoadDisc(disc);
+
+        WriteCommand(bus, 0x02, 0x00, 0x02, 0x10);
+        Acknowledge(bus);
+        WriteCommand(bus, 0x15);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Acknowledge,
+            bus.CdRom.InterruptFlags);
+        Assert.NotEqual(0, ReadResults(bus, 1)[0] & (1 << 6));
+
+        Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SeekResponseDelayCycles - 1);
+        Assert.Equal(0, bus.CdRom.InterruptFlags);
+
+        bus.CdRom.Tick(1);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Complete,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(0, ReadResults(bus, 1)[0] & (1 << 6));
+    }
+
+    [Fact]
+    public void InvalidSetLocationReturnsParameterError()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(32);
+        bus.CdRom.LoadDisc(disc);
+
+        WriteCommand(bus, 0x02, 0x00, 0x6A, 0x00);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.DiskError,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(new byte[] { 0x01, 0x10 }, ReadResults(bus, 2));
+    }
+
+    [Fact]
+    public void LicensedDataDiscCompletesIdentificationAndSessionSetup()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(64);
+        bus.CdRom.LoadDisc(disc);
+
+        SetIndex(bus, 0);
+        bus.Write8(CdRomController.BaseAddress + 1, 0x0A);
+        bus.CdRom.Tick(CdRomController.InitializationCommandDelayCycles);
+        Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SecondResponseDelayCycles);
+        Acknowledge(bus);
+
+        WriteCommand(bus, 0x1A);
+        Assert.Equal(new byte[] { 0x02 }, ReadResults(bus, 1));
+        Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SecondResponseDelayCycles);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Complete,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(
+            new byte[]
+            {
+                0x02,
+                0,
+                0x20,
+                0,
+                (byte)'S',
+                (byte)'C',
+                (byte)'E',
+                (byte)'A',
+            },
+            ReadResults(bus, 8));
+        Acknowledge(bus);
+
+        WriteCommand(bus, 0x12, 1);
+        Assert.NotEqual(0, ReadResults(bus, 1)[0] & (1 << 6));
+        Acknowledge(bus);
+        bus.CdRom.Tick(CdRomController.SeekResponseDelayCycles);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Complete,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(0, ReadResults(bus, 1)[0] & (1 << 6));
     }
 
     private static void WriteCommand(Bus bus, byte command, params byte[] parameters)

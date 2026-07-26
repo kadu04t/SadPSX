@@ -121,7 +121,10 @@ O controlador possui bancos de registradores, FIFOs, IRQ2, comandos de status,
 busca e leitura. `ReadN`/`ReadS` entregam setores continuamente em velocidade
 simples ou dupla, com buffers, `DataReady`, `DataEnd`, pausa e DMA3. Imagens CUE
 podem descrever múltiplas faixas de dados e áudio, usadas por `GetTN`, `GetTD`,
-`GetlocL` e `GetlocP`.
+`GetlocL` e `GetlocP`. `Init`, `GetID`, `SetSession`, `SeekL`, `SeekP` e
+`ReadTOC` modelam motor, busca e respostas secundárias temporizadas. Ao montar
+um disco, o leitor ISO9660 localiza `SYSTEM.CNF` e confirma o caminho, LBA e
+tamanho do executável de boot.
 
 ### GPU
 
@@ -216,15 +219,19 @@ dotnet build SadPSX.slnx
 O frontend SDL3 inicia a BIOS e apresenta a região ativa da VRAM em uma janela:
 
 ```powershell
-dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN
+dotnet run -c Release --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN
 ```
 
 Uma imagem de disco BIN ou CUE pode ser conectada na inicialização:
 
 ```powershell
-dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
+dotnet run -c Release --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
   --disc .\Jogos\Jogo.cue
 ```
+
+Quando a imagem possui uma estrutura inicializável, o console mostra o
+executável encontrado em `SYSTEM.CNF`. O relatório `F1` inclui o último comando
+do CD-ROM, quantidade de comandos, LBA atual e estado de leitura.
 
 O terminal funciona como console de diagnóstico durante a execução. Alertas de
 exceções inesperadas, loops curtos, falta de progresso de vídeo e acessos MMIO
@@ -411,7 +418,8 @@ O SadPSX ainda não possui:
 - Transferências DMA do canal PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
-- Execução de executáveis e sistema de arquivos ISO9660 a partir do CD-ROM.
+- Boot completo do executável encontrado no ISO9660 ainda está em validação
+  com imagens comerciais.
 - Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Controles analógicos, gamepads do host e memory cards.
@@ -424,9 +432,11 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-Os próximos passos naturais são completar os comandos de iluminação/cor da GTE,
-avançar o boot de discos com ISO9660/EXE, adicionar memory cards e refinar a
-precisão e temporização da GPU, SPU e MDEC.
+Os próximos passos naturais são validar o salto da BIOS para o `PS-X EXE`,
+refinar FIFO/timing da GPU, completar comandos de iluminação/cor da GTE e
+adicionar memory cards. O bloco futuro de otimização mantém benchmarks,
+execução da CPU em lotes, caminhos rápidos do barramento, scheduler de eventos
+e separação entre diagnóstico normal e trace completo.
 
 ## Licença
 

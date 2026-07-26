@@ -289,7 +289,21 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("SadPSX Frontend");
         Console.WriteLine($"BIOS: {options.BiosPath}");
         if (options.DiscPath is not null)
+        {
             Console.WriteLine($"Disco: {options.DiscPath}");
+            if (_machine.Bus.CdRom.BootInfo is { } bootInfo)
+            {
+                Console.WriteLine(
+                    $"Boot: {bootInfo.ExecutablePath} " +
+                    $"(LBA {bootInfo.LogicalBlockAddress}, " +
+                    $"{bootInfo.FileSize} bytes)");
+            }
+            else
+            {
+                Console.WriteLine(
+                    "Boot: SYSTEM.CNF ou executável não encontrado.");
+            }
+        }
         Console.WriteLine($"Lote de instruções: {_instructionBatchSize}");
         Console.WriteLine();
         Console.WriteLine("Controles:");
