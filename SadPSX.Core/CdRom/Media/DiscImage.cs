@@ -6,8 +6,37 @@ public abstract class DiscImage : IDisposable
 
     public abstract int SectorCount { get; }
     public abstract DiscTrackMode TrackMode { get; }
+    public virtual IReadOnlyList<DiscTrack> Tracks =>
+        [new DiscTrack(1, 0, TrackMode)];
 
     public abstract void ReadSector(int logicalBlockAddress, Span<byte> destination);
+
+    public DiscTrack GetTrack(byte number)
+    {
+        foreach (DiscTrack track in Tracks)
+        {
+            if (track.Number == number)
+                return track;
+        }
+
+        throw new ArgumentOutOfRangeException(nameof(number));
+    }
+
+    public DiscTrack GetTrackAt(int logicalBlockAddress)
+    {
+        if ((uint)logicalBlockAddress >= SectorCount)
+            throw new ArgumentOutOfRangeException(nameof(logicalBlockAddress));
+
+        DiscTrack current = Tracks[0];
+        foreach (DiscTrack track in Tracks)
+        {
+            if (track.StartLogicalBlockAddress > logicalBlockAddress)
+                break;
+            current = track;
+        }
+
+        return current;
+    }
 
     public static DiscImage Open(string path)
     {

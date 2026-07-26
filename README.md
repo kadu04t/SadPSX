@@ -99,11 +99,20 @@ bus error e IRQ3. Os caminhos funcionais atuais são:
 
 - DMA2 em modo manual ou por blocos entre RAM e GPU.
 - DMA2 em linked-list para envio de listas de comandos GP0.
+- DMA3 por blocos do FIFO do CD-ROM para a RAM.
 - DMA6/OTC para criação reversa da ordering table.
 - Endereçamento DMA de 24 bits com espelhos da RAM.
 
-Os canais MDEC, CD-ROM, SPU e PIO preservam seus registradores, mas ainda não
+Os canais MDEC, SPU e PIO preservam seus registradores, mas ainda não
 executam transferências.
+
+### CD-ROM
+
+O controlador possui bancos de registradores, FIFOs, IRQ2, comandos de status,
+busca e leitura. `ReadN`/`ReadS` entregam setores continuamente em velocidade
+simples ou dupla, com buffers, `DataReady`, `DataEnd`, pausa e DMA3. Imagens CUE
+podem descrever múltiplas faixas de dados e áudio, usadas por `GetTN`, `GetTD`,
+`GetlocL` e `GetlocP`.
 
 ### GPU
 

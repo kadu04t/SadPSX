@@ -65,6 +65,45 @@ public sealed class DiscImageTests
         }
     }
 
+    [Fact]
+    public void CueImageExposesMultipleTracksAndLeadOut()
+    {
+        string directory = CreateTemporaryDirectory();
+        string binPath = Path.Combine(directory, "mixed.bin");
+        string cuePath = Path.Combine(directory, "mixed.cue");
+        File.WriteAllBytes(
+            binPath,
+            new byte[DiscImage.RawSectorSize * 4]);
+        File.WriteAllText(
+            cuePath,
+            """
+            FILE "mixed.bin" BINARY
+              TRACK 01 MODE2/2352
+                INDEX 01 00:00:01
+              TRACK 02 AUDIO
+                INDEX 01 00:00:03
+            """);
+
+        try
+        {
+            using DiscImage disc = DiscImage.Open(cuePath);
+
+            Assert.Equal(3, disc.SectorCount);
+            Assert.Equal(2, disc.Tracks.Count);
+            Assert.Equal(
+                new DiscTrack(1, 0, DiscTrackMode.Mode2),
+                disc.Tracks[0]);
+            Assert.Equal(
+                new DiscTrack(2, 2, DiscTrackMode.Audio),
+                disc.Tracks[1]);
+            Assert.Equal(DiscTrackMode.Audio, disc.GetTrackAt(2).Mode);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string CreateTemporaryDirectory()
     {
         string path = Path.Combine(

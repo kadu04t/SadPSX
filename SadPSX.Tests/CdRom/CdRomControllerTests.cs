@@ -1,4 +1,5 @@
 using SadPSX.Core.CdRom;
+using SadPSX.Core.CdRom.Media;
 using SadPSX.Core.Interrupts;
 using Xunit;
 using Bus = SadPSX.Core.Bus.Bus;
@@ -92,6 +93,98 @@ public sealed class CdRomControllerTests
             ReadResults(bus, 5));
     }
 
+    [Fact]
+    public void ReadNContinuesUntilEndOfDisc()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(3);
+        bus.CdRom.LoadDisc(disc);
+
+        WriteCommand(bus, 0x06);
+        Acknowledge(bus);
+
+        for (int sector = 0; sector < 3; sector++)
+        {
+            bus.CdRom.Tick(CdRomController.SingleSpeedSectorCycles);
+            Assert.Equal(
+                (byte)CdRomInterruptType.DataReady,
+                bus.CdRom.InterruptFlags);
+            Acknowledge(bus);
+        }
+
+        bus.CdRom.Tick(CdRomController.SingleSpeedSectorCycles);
+
+        Assert.False(bus.CdRom.IsReading);
+        Assert.Equal(3, bus.CdRom.BufferedSectorCount);
+        Assert.Equal(
+            (byte)CdRomInterruptType.DataEnd,
+            bus.CdRom.InterruptFlags);
+    }
+
+    [Fact]
+    public void DoubleSpeedModeHalvesSectorInterval()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(2);
+        bus.CdRom.LoadDisc(disc);
+        WriteCommand(bus, 0x0E, 0x80);
+        Acknowledge(bus);
+        WriteCommand(bus, 0x06);
+        Acknowledge(bus);
+
+        bus.CdRom.Tick(CdRomController.DoubleSpeedSectorCycles);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.DataReady,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(1, bus.CdRom.BufferedSectorCount);
+    }
+
+    [Fact]
+    public void PauseStopsContinuousReadingAndCompletes()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(3);
+        bus.CdRom.LoadDisc(disc);
+        WriteCommand(bus, 0x06);
+        Acknowledge(bus);
+
+        WriteCommand(bus, 0x09);
+
+        Assert.False(bus.CdRom.IsReading);
+        Assert.Equal(
+            (byte)CdRomInterruptType.Acknowledge,
+            bus.CdRom.InterruptFlags);
+        Acknowledge(bus);
+        Assert.Equal(
+            (byte)CdRomInterruptType.Complete,
+            bus.CdRom.InterruptFlags);
+    }
+
+    [Fact]
+    public void TrackCommandsReportCueTableOfContents()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(
+            300,
+            [
+                new DiscTrack(1, 0, DiscTrackMode.Mode2),
+                new DiscTrack(2, 150, DiscTrackMode.Audio),
+            ]);
+        bus.CdRom.LoadDisc(disc);
+
+        WriteCommand(bus, 0x13);
+        Assert.Equal(
+            new byte[] { 0x02, 0x01, 0x02 },
+            ReadResults(bus, 3));
+        Acknowledge(bus);
+
+        WriteCommand(bus, 0x14, 0x02);
+        Assert.Equal(
+            new byte[] { 0x02, 0x00, 0x04 },
+            ReadResults(bus, 3));
+    }
+
     private static void WriteCommand(Bus bus, byte command, params byte[] parameters)
     {
         SetIndex(bus, 0);
@@ -117,4 +210,26 @@ public sealed class CdRomControllerTests
 
     private static void SetIndex(Bus bus, byte index) =>
         bus.Write8(CdRomController.BaseAddress, index);
+
+    private sealed class TestDiscImage(
+        int sectorCount,
+        IReadOnlyList<DiscTrack>? tracks = null) : DiscImage
+    {
+        public override int SectorCount { get; } = sectorCount;
+        public override DiscTrackMode TrackMode => DiscTrackMode.Mode2;
+        public override IReadOnlyList<DiscTrack> Tracks { get; } =
+            tracks ?? [new DiscTrack(1, 0, DiscTrackMode.Mode2)];
+
+        public override void ReadSector(
+            int logicalBlockAddress,
+            Span<byte> destination)
+        {
+            destination.Clear();
+            destination[24] = (byte)logicalBlockAddress;
+        }
+
+        public override void Dispose()
+        {
+        }
+    }
 }
