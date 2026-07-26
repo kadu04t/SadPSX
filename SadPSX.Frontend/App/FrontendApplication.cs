@@ -29,6 +29,8 @@ internal sealed class FrontendApplication : IDisposable
     {
         _machine = new PsxMachine();
         _machine.LoadBios(options.BiosPath);
+        if (options.DiscPath is not null)
+            _machine.LoadDisc(options.DiscPath);
         _instructionBatchSize = options.InstructionBatchSize;
         _frameLimit = options.FrameLimit;
         _paused = options.StartPaused;
@@ -53,6 +55,13 @@ internal sealed class FrontendApplication : IDisposable
         {
             Console.Error.WriteLine(
                 $"Erro: arquivo de BIOS não encontrado: {options.BiosPath}");
+            return 1;
+        }
+
+        if (options.DiscPath is not null && !File.Exists(options.DiscPath))
+        {
+            Console.Error.WriteLine(
+                $"Erro: imagem de disco não encontrada: {options.DiscPath}");
             return 1;
         }
 
@@ -196,6 +205,8 @@ internal sealed class FrontendApplication : IDisposable
     {
         Console.WriteLine("SadPSX Frontend");
         Console.WriteLine($"BIOS: {options.BiosPath}");
+        if (options.DiscPath is not null)
+            Console.WriteLine($"Disco: {options.DiscPath}");
         Console.WriteLine($"Lote de instruções: {_instructionBatchSize}");
         Console.WriteLine();
         Console.WriteLine("Controles:");
@@ -211,6 +222,7 @@ internal sealed class FrontendApplication : IDisposable
         Console.Error.WriteLine();
         Console.Error.WriteLine(
             "Uso: dotnet run --project SadPSX.Frontend -- " +
-            "<BIOS.BIN> [--batch N] [--paused] [--frames N]");
+            "<BIOS.BIN> [--disc jogo.cue|jogo.bin] " +
+            "[--batch N] [--paused] [--frames N]");
     }
 }

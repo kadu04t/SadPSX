@@ -1,4 +1,5 @@
 using SadPSX.Core.Bus;
+using SadPSX.Core.CdRom;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
@@ -30,10 +31,12 @@ public sealed class DmaController : IMmioDevice
     private const uint DmaAddressLimit = 0x0080_0000;
     private const ulong MaximumTransferWords = 0x0100_0000;
     private const int GpuChannel = 2;
+    private const int CdRomChannel = 3;
     private const int OtcChannel = 6;
 
     private readonly InterruptController _interruptController;
     private readonly GpuDevice _gpu;
+    private readonly CdRomController _cdRom;
     private readonly ChannelState[] _channels =
     [
         new(),
@@ -52,11 +55,13 @@ public sealed class DmaController : IMmioDevice
     public DmaController(
         InterruptController interruptController,
         GpuDevice gpu,
+        CdRomController cdRom,
         Ram? ram = null)
     {
         _interruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
         _gpu = gpu ?? throw new ArgumentNullException(nameof(gpu));
+        _cdRom = cdRom ?? throw new ArgumentNullException(nameof(cdRom));
         _ram = ram ?? new Ram();
         Reset();
     }
@@ -299,11 +304,54 @@ public sealed class DmaController : IMmioDevice
                 CompleteChannel(channel);
                 break;
 
+            case CdRomChannel:
+                TransferCdRom(state, channelControl, synchronizationMode);
+                CompleteChannel(channel);
+                break;
+
             case OtcChannel:
                 TransferOtc(state, synchronizationMode);
                 CompleteChannel(channel);
                 break;
         }
+    }
+
+    private void TransferCdRom(
+        ChannelState channel,
+        uint channelControl,
+        uint synchronizationMode)
+    {
+        if ((channelControl & 1) != 0 || synchronizationMode == 2)
+        {
+            SignalBusError();
+            return;
+        }
+
+        ulong wordCount = GetWordCount(channel.BlockControl, synchronizationMode);
+        if (wordCount > MaximumTransferWords)
+        {
+            SignalBusError();
+            return;
+        }
+
+        uint address = channel.BaseAddress & DmaAddressMask;
+        for (ulong word = 0; word < wordCount; word++)
+        {
+            if (!IsRamDmaAddress(address))
+            {
+                SignalBusError();
+                break;
+            }
+
+            _ram.Write32(
+                address & RamAddressMask,
+                _cdRom.ReadDmaWord());
+            address = (address + 4) & DmaAddressMask;
+        }
+
+        channel.BaseAddress = address & 0x00FF_FFFF;
+        if (synchronizationMode == 1)
+            channel.BlockControl &= 0x0000_FFFF;
     }
 
     private void TransferGpu(

@@ -1,4 +1,5 @@
 using SadPSX.Core.Cpu;
+using SadPSX.Core.CdRom.Media;
 using SystemBus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Core;
@@ -73,6 +74,16 @@ public sealed class PsxMachine
 
         foreach (IClockedDevice device in _clockedDevices)
             device.Tick(Cpu.LastStepCycles);
+    }
+
+    public void LoadDisc(string discFilePath)
+    {
+        Bus.CdRom.LoadDisc(discFilePath);
+    }
+
+    public void LoadDisc(DiscImage disc)
+    {
+        Bus.CdRom.LoadDisc(disc);
     }
 
     public void RegisterClockedDevice(IClockedDevice device)

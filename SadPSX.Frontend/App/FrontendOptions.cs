@@ -2,6 +2,7 @@ namespace SadPSX.Frontend.App;
 
 internal sealed record FrontendOptions(
     string BiosPath,
+    string? DiscPath,
     int InstructionBatchSize,
     bool StartPaused,
     int? FrameLimit)
@@ -12,6 +13,7 @@ internal sealed record FrontendOptions(
             throw new ArgumentException("Informe o caminho da BIOS.");
 
         string? biosPath = null;
+        string? discPath = null;
         int instructionBatchSize = 10_000;
         bool startPaused = false;
         int? frameLimit = null;
@@ -27,6 +29,11 @@ internal sealed record FrontendOptions(
                     instructionBatchSize = ParsePositiveInteger(
                         ReadValue(arguments, ref argumentIndex, argument),
                         argument);
+                    break;
+
+                case "--disc":
+                    discPath = Path.GetFullPath(
+                        ReadValue(arguments, ref argumentIndex, argument));
                     break;
 
                 case "--paused":
@@ -58,6 +65,7 @@ internal sealed record FrontendOptions(
 
         return new FrontendOptions(
             Path.GetFullPath(biosPath),
+            discPath,
             instructionBatchSize,
             startPaused,
             frameLimit);

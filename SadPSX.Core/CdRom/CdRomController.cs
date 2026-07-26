@@ -1,4 +1,5 @@
 using SadPSX.Core.Bus;
+using SadPSX.Core.CdRom.Media;
 using SadPSX.Core.Interrupts;
 
 namespace SadPSX.Core.CdRom;
@@ -15,7 +16,9 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private readonly InterruptController _interruptController;
     private readonly Queue<byte> _parameters = new(FifoCapacity);
     private readonly Queue<byte> _results = new(FifoCapacity);
+    private readonly Queue<byte> _data = new();
     private readonly Queue<Response> _responses = new();
+    private readonly byte[] _sector = new byte[DiscImage.RawSectorSize];
 
     private byte _index;
     private byte _interruptEnable;
@@ -25,6 +28,9 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private byte _filterChannel;
     private bool _commandBusy;
     private uint _commandCyclesRemaining;
+    private DiscImage? _disc;
+    private int _pendingLogicalBlockAddress;
+    private bool _sectorAvailable;
 
     public CdRomController(InterruptController interruptController)
     {
@@ -41,11 +47,36 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public int ParameterCount => _parameters.Count;
     public int ResultCount => _results.Count;
     public bool CommandBusy => _commandBusy;
+    public bool HasDisc => _disc is not null;
+    public int DataCount => _data.Count;
+
+    public void LoadDisc(string path)
+    {
+        LoadDisc(DiscImage.Open(path));
+    }
+
+    public void LoadDisc(DiscImage disc)
+    {
+        ArgumentNullException.ThrowIfNull(disc);
+        _disc?.Dispose();
+        _disc = disc;
+        _sectorAvailable = false;
+        _data.Clear();
+    }
+
+    public void EjectDisc()
+    {
+        _disc?.Dispose();
+        _disc = null;
+        _sectorAvailable = false;
+        _data.Clear();
+    }
 
     public void Reset()
     {
         _parameters.Clear();
         _results.Clear();
+        _data.Clear();
         _responses.Clear();
         _index = 0;
         _interruptEnable = 0;
@@ -55,6 +86,8 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _filterChannel = 0;
         _commandBusy = false;
         _commandCyclesRemaining = 0;
+        _pendingLogicalBlockAddress = 0;
+        _sectorAvailable = false;
         LastCommand = 0;
     }
 
@@ -85,7 +118,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         {
             0 => ReadStatus(),
             1 => ReadResult(),
-            2 => 0,
+            2 => ReadDataByte(),
             3 => _index is 0 or 2
                 ? (byte)(0xE0 | _interruptEnable)
                 : (byte)(0xE0 | _interruptFlags),
@@ -133,6 +166,10 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
             case 3 when _index == 1:
                 AcknowledgeInterrupt(value);
                 break;
+
+            case 3 when _index == 0:
+                WriteRequest(value);
+                break;
         }
     }
 
@@ -176,6 +213,8 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
             value |= 1 << 5;
         if (_commandBusy)
             value |= 1 << 7;
+        if (_data.Count > 0)
+            value |= 1 << 6;
         return value;
     }
 
@@ -195,15 +234,19 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private void ExecuteCommand(byte command)
     {
         byte[] parameters = DrainParameters();
+        byte status = GetStatus();
         switch (command)
         {
             case 0x01:
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
                 break;
 
             case 0x02:
+                SetLocation(parameters);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
+                break;
+
             case 0x03:
-            case 0x06:
             case 0x07:
             case 0x08:
             case 0x09:
@@ -212,33 +255,37 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
             case 0x12:
             case 0x15:
             case 0x16:
-            case 0x1B:
             case 0x1C:
             case 0x1E:
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
+                break;
+
+            case 0x06:
+            case 0x1B:
+                StartRead();
                 break;
 
             case 0x0A:
                 _mode = 0;
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
-                QueueResponse(CdRomInterruptType.Complete, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
+                QueueResponse(CdRomInterruptType.Complete, status);
                 break;
 
             case 0x0D:
                 _filterFile = ParameterAt(parameters, 0);
                 _filterChannel = ParameterAt(parameters, 1);
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
                 break;
 
             case 0x0E:
                 _mode = ParameterAt(parameters, 0);
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, status);
                 break;
 
             case 0x0F:
                 QueueResponse(
                     CdRomInterruptType.Acknowledge,
-                    NoDiscStatus,
+                    status,
                     _mode,
                     0,
                     _filterFile,
@@ -246,19 +293,16 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 break;
 
             case 0x13:
-                QueueResponse(
-                    CdRomInterruptType.DiskError,
-                    (byte)(NoDiscStatus | 1),
+                QueueResponse(_disc is null
+                    ? CdRomInterruptType.DiskError
+                    : CdRomInterruptType.Acknowledge,
+                    (byte)(status | (_disc is null ? 1 : 0)),
                     1,
                     1);
                 break;
 
             case 0x14:
-                QueueResponse(
-                    CdRomInterruptType.DiskError,
-                    (byte)(NoDiscStatus | 1),
-                    0,
-                    0);
+                GetTrackDuration(parameters, status);
                 break;
 
             case 0x19:
@@ -266,17 +310,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 break;
 
             case 0x1A:
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
-                QueueResponse(
-                    CdRomInterruptType.DiskError,
-                    0x08,
-                    0x40,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0);
+                GetId(status);
                 break;
 
             default:
@@ -286,6 +320,119 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                     0x40);
                 break;
         }
+    }
+
+    public uint ReadDmaWord()
+    {
+        uint value = 0;
+        for (int index = 0; index < 4; index++)
+            value |= (uint)ReadDataByte() << (index * 8);
+        return value;
+    }
+
+    private void SetLocation(byte[] parameters)
+    {
+        int minutes = FromBcd(ParameterAt(parameters, 0));
+        int seconds = FromBcd(ParameterAt(parameters, 1));
+        int frames = FromBcd(ParameterAt(parameters, 2));
+        _pendingLogicalBlockAddress =
+            Math.Max(0, (minutes * 60 + seconds) * 75 + frames - 150);
+    }
+
+    private void StartRead()
+    {
+        byte status = GetStatus();
+        if (_disc is null ||
+            (uint)_pendingLogicalBlockAddress >= _disc.SectorCount)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0x80);
+            return;
+        }
+
+        _disc.ReadSector(_pendingLogicalBlockAddress, _sector);
+        _pendingLogicalBlockAddress++;
+        _sectorAvailable = true;
+        QueueResponse(CdRomInterruptType.Acknowledge, status);
+        QueueResponse(
+            CdRomInterruptType.DataReady,
+            (byte)(status | (1 << 5)));
+    }
+
+    private void WriteRequest(byte value)
+    {
+        if ((value & 0x80) == 0)
+        {
+            _data.Clear();
+            return;
+        }
+
+        if (!_sectorAvailable || _disc is null)
+            return;
+
+        _data.Clear();
+        bool rawSector = (_mode & (1 << 5)) != 0;
+        int offset = rawSector
+            ? 12
+            : _disc.TrackMode == DiscTrackMode.Mode1 ? 16 : 24;
+        int length = rawSector ? 2340 : 2048;
+        for (int index = 0; index < length; index++)
+            _data.Enqueue(_sector[offset + index]);
+    }
+
+    private byte ReadDataByte() =>
+        _data.TryDequeue(out byte value) ? value : (byte)0;
+
+    private void GetTrackDuration(byte[] parameters, byte status)
+    {
+        if (_disc is null)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                (byte)(status | 1),
+                0,
+                0);
+            return;
+        }
+
+        int absoluteFrames = _disc.SectorCount + 150;
+        QueueResponse(
+            CdRomInterruptType.Acknowledge,
+            status,
+            ToBcd(absoluteFrames / (60 * 75)),
+            ToBcd(absoluteFrames / 75 % 60));
+    }
+
+    private void GetId(byte status)
+    {
+        QueueResponse(CdRomInterruptType.Acknowledge, status);
+        if (_disc is null)
+        {
+            QueueResponse(
+                CdRomInterruptType.DiskError,
+                0x08,
+                0x40,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0);
+            return;
+        }
+
+        QueueResponse(
+            CdRomInterruptType.Complete,
+            status,
+            0,
+            0x20,
+            0,
+            (byte)'S',
+            (byte)'C',
+            (byte)'E',
+            (byte)'A');
     }
 
     private void ExecuteTest(byte[] parameters)
@@ -302,7 +449,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 break;
 
             default:
-                QueueResponse(CdRomInterruptType.Acknowledge, NoDiscStatus);
+                QueueResponse(CdRomInterruptType.Acknowledge, GetStatus());
                 break;
         }
     }
@@ -362,6 +509,14 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
 
     private static byte ParameterAt(byte[] parameters, int index) =>
         index < parameters.Length ? parameters[index] : (byte)0;
+
+    private byte GetStatus() => _disc is null ? NoDiscStatus : (byte)(1 << 1);
+
+    private static int FromBcd(byte value) =>
+        (value >> 4) * 10 + (value & 0x0F);
+
+    private static byte ToBcd(int value) =>
+        (byte)(((value / 10) << 4) | (value % 10));
 
     private static void EnsureAligned(uint address, uint width, string operation)
     {

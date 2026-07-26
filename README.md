@@ -141,9 +141,10 @@ O barramento implementa as seguintes regiões:
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
-| DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA6 funcionais |
+| DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA3/DMA6 funcionais |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
 | GPU Ports | `0x1F801810-0x1F801817` | GP0/GP1 e VRAM funcionais |
+| CD-ROM Ports | `0x1F801800-0x1F801803` | Comandos, FIFOs, IRQ2 e setores |
 | SPU Registers | `0x1F801C00-0x1F801DFF` | Interface inicial |
 | Cache Control | `0xFFFE0130` | Registrador implementado |
 
@@ -187,6 +188,13 @@ O frontend SDL3 inicia a BIOS e apresenta a região ativa da VRAM em uma janela:
 
 ```powershell
 dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN
+```
+
+Uma imagem de disco BIN ou CUE pode ser conectada na inicialização:
+
+```powershell
+dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
+  --disc .\Jogos\Jogo.cue
 ```
 
 A emulação roda continuamente e a primeira tela da BIOS pode levar algum tempo
@@ -342,10 +350,10 @@ O SadPSX ainda não possui:
 - Menus, configuração persistente e seleção gráfica de BIOS/disco.
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização pixel-perfect, dithering e temporização do FIFO da GPU.
-- Transferências DMA dos canais MDEC, CD-ROM, SPU e PIO.
+- Transferências DMA dos canais MDEC, SPU e PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - GTE/COP2.
-- CD-ROM e carregamento de jogos.
+- Execução de executáveis e sistema de arquivos ISO9660 a partir do CD-ROM.
 - Síntese da SPU e saída de áudio.
 - MDEC.
 - Controles e memory cards.
@@ -358,10 +366,11 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-O próximo componente natural é o CD-ROM, necessário para carregar executáveis
-e dados de jogos. Em seguida, controles/memory cards e síntese da SPU podem
-avançar sobre uma base que já executa a BIOS, transfere listas por DMA2 e
-rasteriza comandos gráficos básicos na VRAM.
+O próximo passo natural é completar o fluxo de boot do disco, incluindo leitura
+contínua, comandos restantes e temporização do CD-ROM. Em seguida,
+controles/memory cards e síntese da SPU podem avançar sobre uma base que já
+executa a BIOS, transfere dados por DMA2/DMA3 e rasteriza comandos gráficos
+básicos na VRAM.
 
 ## Licença
 
