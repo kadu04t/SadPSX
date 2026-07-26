@@ -1,3 +1,4 @@
+using SadPSX.Core.CdRom;
 using SadPSX.Core.Dma;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
@@ -33,6 +34,7 @@ public sealed class Mmio
         InterruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
         RootCounters = new RootCounters(InterruptController);
+        CdRom = new CdRomController(InterruptController);
         Spu = new SpuDevice();
         Gpu = new GpuDevice(InterruptController);
         VideoTiming = new GpuVideoTiming(
@@ -46,6 +48,7 @@ public sealed class Mmio
             InterruptController,
             Dma,
             RootCounters,
+            CdRom,
             Spu,
             Gpu,
         ];
@@ -54,6 +57,7 @@ public sealed class Mmio
     public MemoryControl MemoryControl { get; }
     public InterruptController InterruptController { get; }
     public RootCounters RootCounters { get; }
+    public CdRomController CdRom { get; }
     public SpuDevice Spu { get; }
     public GpuDevice Gpu { get; }
     public GpuVideoTiming VideoTiming { get; }

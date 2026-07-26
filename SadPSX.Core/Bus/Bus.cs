@@ -1,4 +1,5 @@
 using SadPSX.Core.Bios;
+using SadPSX.Core.CdRom;
 using SadPSX.Core.Dma;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
@@ -63,6 +64,7 @@ public sealed class Bus
     public MemoryControl MemoryControl => Mmio.MemoryControl;
     public InterruptController InterruptController => Mmio.InterruptController;
     public RootCounters RootCounters => Mmio.RootCounters;
+    public CdRomController CdRom => Mmio.CdRom;
     public SpuDevice Spu => Mmio.Spu;
     public GpuDevice Gpu => Mmio.Gpu;
     public GpuVideoTiming VideoTiming => Mmio.VideoTiming;
