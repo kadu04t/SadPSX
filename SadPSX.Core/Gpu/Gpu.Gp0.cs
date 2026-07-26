@@ -172,7 +172,7 @@ public sealed partial class Gpu
             case 0xE1:
                 _status = (_status & ~0x0000_07FFu) |
                           (commandWord & 0x0000_07FFu);
-                _internalRegisters[0] = commandWord & 0x0000_0FFFu;
+                _internalRegisters[0] = commandWord & 0x0000_3FFFu;
                 break;
 
             case 0xE2:

@@ -121,7 +121,9 @@ A GPU implementa os ports `GP0/GPUREAD` e `GP1/GPUSTAT`, uma VRAM de
 DMA2. Estão disponíveis preenchimento e cópia da VRAM, transferências
 CPU↔VRAM, polígonos, linhas, polylines e retângulos flat, Gouraud e
 texturizados, incluindo CLUT de 4/8 bits, texturas de 15 bits, clipping,
-offset de desenho, máscara e semitransparência.
+offset de desenho, texture window, flips de sprites, máscara e
+semitransparência por texel. Polígonos usam a regra top-left e dithering 4x4
+para Gouraud e modulação.
 
 O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
 scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
@@ -370,7 +372,7 @@ O SadPSX ainda não possui:
 
 - Menus, configuração persistente e seleção gráfica de BIOS/disco.
 - Sincronização de velocidade e execução da CPU em thread dedicada.
-- Rasterização pixel-perfect, dithering e temporização do FIFO da GPU.
+- Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA dos canais MDEC, SPU e PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - GTE/COP2.
@@ -387,11 +389,10 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-O próximo passo natural é completar o fluxo de boot do disco, incluindo leitura
-contínua, comandos restantes e temporização do CD-ROM. Em seguida,
-controles/memory cards e síntese da SPU podem avançar sobre uma base que já
-executa a BIOS, transfere dados por DMA2/DMA3 e rasteriza comandos gráficos
-básicos na VRAM.
+Os próximos componentes naturais são GTE/COP2 e controles. A GTE desbloqueia a
+geometria 3D usada pelos jogos, enquanto SIO0 e o controle digital permitem
+interagir com menus assim que o boot pelo CD-ROM avançar. Depois, memory cards,
+síntese da SPU e MDEC completam os subsistemas mais visíveis.
 
 ## Licença
 

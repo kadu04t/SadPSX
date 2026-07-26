@@ -2,6 +2,14 @@ namespace SadPSX.Core.Gpu;
 
 public sealed partial class Gpu
 {
+    private static readonly int[,] DitherMatrix =
+    {
+        { -4, 0, -3, 1 },
+        { 2, -2, 3, -1 },
+        { -3, 1, -4, 0 },
+        { 3, -1, 2, -2 },
+    };
+
     private readonly record struct RgbColor(int Red, int Green, int Blue);
 
     private readonly record struct RasterVertex(
@@ -68,6 +76,7 @@ public sealed partial class Gpu
             vertices[0],
             vertices[1],
             vertices[2],
+            gouraud,
             textured,
             semiTransparent,
             rawTexture,
@@ -81,6 +90,7 @@ public sealed partial class Gpu
                 vertices[1],
                 vertices[2],
                 vertices[3],
+                gouraud,
                 textured,
                 semiTransparent,
                 rawTexture,
@@ -94,6 +104,7 @@ public sealed partial class Gpu
         RasterVertex first,
         RasterVertex second,
         RasterVertex third,
+        bool gouraud,
         bool textured,
         bool semiTransparent,
         bool rawTexture,
@@ -104,6 +115,15 @@ public sealed partial class Gpu
         double area = Edge(first, second, third.PixelX, third.PixelY);
         if (area == 0)
             return;
+
+        if (area < 0)
+        {
+            (second, third) = (third, second);
+            area = -area;
+        }
+
+        bool dither = (_internalRegisters[0] & (1u << 9)) != 0 &&
+            (gouraud || (textured && !rawTexture));
 
         GetDrawingArea(
             out int drawingLeft,
@@ -134,11 +154,21 @@ public sealed partial class Gpu
                 double secondWeight = Edge(third, first, sampleX, sampleY);
                 double thirdWeight = Edge(first, second, sampleX, sampleY);
 
-                bool inside = area > 0
-                    ? firstWeight >= 0 && secondWeight >= 0 && thirdWeight >= 0
-                    : firstWeight <= 0 && secondWeight <= 0 && thirdWeight <= 0;
-                if (!inside)
+                if (!IsInsideTopLeft(
+                        firstWeight,
+                        second,
+                        third) ||
+                    !IsInsideTopLeft(
+                        secondWeight,
+                        third,
+                        first) ||
+                    !IsInsideTopLeft(
+                        thirdWeight,
+                        first,
+                        second))
+                {
                     continue;
+                }
 
                 firstWeight /= area;
                 secondWeight /= area;
@@ -157,7 +187,7 @@ public sealed partial class Gpu
                     WriteDrawingPixel(
                         pixelX,
                         pixelY,
-                        PackColor(color),
+                        PackColor(color, pixelX, pixelY, dither),
                         semiTransparent,
                         false);
                     continue;
@@ -183,7 +213,14 @@ public sealed partial class Gpu
                     continue;
                 }
 
-                ushort source = rawTexture ? texel : ModulateTexture(texel, color);
+                ushort source = rawTexture
+                    ? texel
+                    : ModulateTexture(
+                        texel,
+                        color,
+                        pixelX,
+                        pixelY,
+                        dither);
                 bool blend = semiTransparent && (texel & 0x8000) != 0;
                 WriteDrawingPixel(pixelX, pixelY, source, blend, true);
             }
@@ -248,7 +285,11 @@ public sealed partial class Gpu
             WriteDrawingPixel(
                 pixelX,
                 pixelY,
-                PackColor(color),
+                PackColor(
+                    color,
+                    pixelX,
+                    pixelY,
+                    (_internalRegisters[0] & (1u << 9)) != 0),
                 semiTransparent,
                 false);
 
@@ -363,7 +404,12 @@ public sealed partial class Gpu
 
                 ushort source = rawTexture
                     ? texel
-                    : ModulateTexture(texel, origin.Color);
+                    : ModulateTexture(
+                        texel,
+                        origin.Color,
+                        pixelX,
+                        pixelY,
+                        dither: false);
                 bool blend = semiTransparent && (texel & 0x8000) != 0;
                 WriteDrawingPixel(pixelX, pixelY, source, blend, true);
             }
@@ -426,8 +472,8 @@ public sealed partial class Gpu
     {
         uint textureWindow = _internalRegisters[2];
         int maskX = (int)(textureWindow & 0x1F);
-        int maskY = (int)((textureWindow >> 10) & 0x1F);
-        int offsetX = (int)((textureWindow >> 5) & 0x1F);
+        int maskY = (int)((textureWindow >> 5) & 0x1F);
+        int offsetX = (int)((textureWindow >> 10) & 0x1F);
         int offsetY = (int)((textureWindow >> 15) & 0x1F);
 
         textureU =
@@ -438,15 +484,19 @@ public sealed partial class Gpu
             ((offsetY & maskY) * 8);
     }
 
-    private static ushort ModulateTexture(ushort texel, RgbColor color)
+    private static ushort ModulateTexture(
+        ushort texel,
+        RgbColor color,
+        int pixelX,
+        int pixelY,
+        bool dither)
     {
-        int red = Math.Min(31, (texel & 0x1F) * color.Red / 128);
-        int green = Math.Min(31, ((texel >> 5) & 0x1F) * color.Green / 128);
-        int blue = Math.Min(31, ((texel >> 10) & 0x1F) * color.Blue / 128);
+        var modulated = new RgbColor(
+            Math.Min(255, (texel & 0x1F) * color.Red / 16),
+            Math.Min(255, ((texel >> 5) & 0x1F) * color.Green / 16),
+            Math.Min(255, ((texel >> 10) & 0x1F) * color.Blue / 16));
         return (ushort)(
-            red |
-            (green << 5) |
-            (blue << 10) |
+            PackColor(modulated, pixelX, pixelY, dither) |
             (texel & 0x8000));
     }
 
@@ -560,12 +610,37 @@ public sealed partial class Gpu
             (int)((value >> 16) & 0xFF));
     }
 
-    private static ushort PackColor(RgbColor color)
+    private static ushort PackColor(RgbColor color) =>
+        PackColor(color, 0, 0, dither: false);
+
+    private static ushort PackColor(
+        RgbColor color,
+        int pixelX,
+        int pixelY,
+        bool dither)
     {
-        int red = Math.Clamp(color.Red, 0, 255) >> 3;
-        int green = Math.Clamp(color.Green, 0, 255) >> 3;
-        int blue = Math.Clamp(color.Blue, 0, 255) >> 3;
+        int ditherOffset = dither
+            ? DitherMatrix[pixelY & 3, pixelX & 3]
+            : 0;
+        int red = Math.Clamp(color.Red + ditherOffset, 0, 255) >> 3;
+        int green = Math.Clamp(color.Green + ditherOffset, 0, 255) >> 3;
+        int blue = Math.Clamp(color.Blue + ditherOffset, 0, 255) >> 3;
         return (ushort)(red | (green << 5) | (blue << 10));
+    }
+
+    private static bool IsInsideTopLeft(
+        double edgeValue,
+        RasterVertex start,
+        RasterVertex end)
+    {
+        if (edgeValue > 0)
+            return true;
+        if (edgeValue < 0)
+            return false;
+
+        int deltaX = end.PixelX - start.PixelX;
+        int deltaY = end.PixelY - start.PixelY;
+        return deltaY > 0 || (deltaY == 0 && deltaX < 0);
     }
 
     private static RgbColor InterpolateColor(

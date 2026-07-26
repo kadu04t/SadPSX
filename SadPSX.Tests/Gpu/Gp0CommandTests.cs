@@ -211,6 +211,119 @@ public sealed class Gp0CommandTests
     }
 
     [Fact]
+    public void TextureWindowRemapsTextureCoordinates()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 8, 0, 1, 1, 0x0000_4210);
+        SendGp0(gpu, 0xE100_0100);
+        SendGp0(gpu, 0xE200_0401);
+
+        SendGp0(
+            gpu,
+            0x6500_0000,
+            PackPosition(70, 70),
+            0x0000_0000,
+            PackSize(1, 1));
+
+        Assert.Equal(0x4210u, gpu.Vram.ReadPixel(70, 70));
+    }
+
+    [Fact]
+    public void TexturedRectangleHonorsHorizontalFlip()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 0, 0, 2, 1, 0x03E0_001F);
+        SendGp0(gpu, 0xE100_1100);
+
+        SendGp0(
+            gpu,
+            0x6500_0000,
+            PackPosition(80, 80),
+            0x0000_0000,
+            PackSize(2, 1));
+
+        Assert.Equal(0x03E0u, gpu.Vram.ReadPixel(80, 80));
+        Assert.Equal(0x001Fu, gpu.Vram.ReadPixel(81, 80));
+    }
+
+    [Fact]
+    public void GouraudPolygonUsesFourByFourDitherMatrix()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        SendGp0(gpu, 0xE100_0200);
+
+        SendGp0(
+            gpu,
+            0x3007_0707,
+            PackPosition(0, 0),
+            0x0007_0707,
+            PackPosition(8, 0),
+            0x0007_0707,
+            PackPosition(0, 8));
+
+        Assert.Equal(0u, gpu.Vram.ReadPixel(0, 0));
+        Assert.Equal(0x0421u, gpu.Vram.ReadPixel(3, 0));
+    }
+
+    [Fact]
+    public void FlatPolygonDoesNotUseDithering()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        SendGp0(gpu, 0xE100_0200);
+
+        SendGp0(
+            gpu,
+            0x2007_0707,
+            PackPosition(0, 0),
+            PackPosition(8, 0),
+            PackPosition(0, 8));
+
+        Assert.Equal(0u, gpu.Vram.ReadPixel(3, 0));
+    }
+
+    [Fact]
+    public void SharedQuadEdgeIsRasterizedOnlyOnce()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        SendGp0(gpu, 0xE100_0020);
+
+        SendGp0(
+            gpu,
+            0x2A00_0040,
+            PackPosition(10, 10),
+            PackPosition(14, 10),
+            PackPosition(10, 14),
+            PackPosition(14, 14));
+
+        Assert.Equal(0x0008u, gpu.Vram.ReadPixel(11, 12));
+    }
+
+    [Fact]
+    public void TexturedTransparencyDependsOnTexelMaskBit()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 64, 0, 2, 1, 0x801F_001F);
+        UploadPixels(gpu, 20, 20, 2, 1, 0x03E0_03E0);
+        SendGp0(gpu, 0xE100_0101);
+
+        SendGp0(
+            gpu,
+            0x6700_0000,
+            PackPosition(20, 20),
+            0x0000_0000,
+            PackSize(2, 1));
+
+        Assert.Equal(0x001Fu, gpu.Vram.ReadPixel(20, 20));
+        Assert.Equal(0x81EFu, gpu.Vram.ReadPixel(21, 20));
+    }
+
+    [Fact]
     public void ResetCommandBufferCancelsIncompletePacket()
     {
         var gpu = CreateGpu();
