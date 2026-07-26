@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using SadPSX.Core.Bus;
 
 namespace SadPSX.Core.Spu;
@@ -13,6 +14,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public const uint StatusRegister = 0x1F80_1DAE;
     public const uint MainVolumeLeftRegister = 0x1F80_1D80;
     public const uint MainVolumeRightRegister = 0x1F80_1D82;
+    public const uint CdVolumeLeftRegister = 0x1F80_1DB0;
+    public const uint CdVolumeRightRegister = 0x1F80_1DB2;
     public const uint KeyOnLowRegister = 0x1F80_1D88;
     public const uint KeyOnHighRegister = 0x1F80_1D8A;
     public const uint KeyOffLowRegister = 0x1F80_1D8C;
@@ -35,6 +38,7 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private readonly byte[] _soundRam = new byte[SoundRamSize];
     private readonly Queue<ushort> _transferFifo = new(32);
     private readonly Queue<StereoSample> _sampleQueue = new();
+    private readonly Queue<StereoSample> _cdAudioQueue = new();
     private readonly SpuVoice[] _voices =
         Enumerable.Range(0, VoiceCount).Select(_ => new SpuVoice()).ToArray();
 
@@ -59,6 +63,7 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         Array.Clear(_soundRam);
         _transferFifo.Clear();
         _sampleQueue.Clear();
+        _cdAudioQueue.Clear();
         foreach (SpuVoice voice in _voices)
             voice.Reset();
         _currentTransferAddress = 0;
@@ -239,6 +244,27 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         return frames;
     }
 
+    public void QueueCdAudioSector(ReadOnlySpan<byte> sector)
+    {
+        if (sector.Length < 4 || (sector.Length & 3) != 0)
+        {
+            throw new ArgumentException(
+                "O setor CD-DA deve conter amostras estéreo de 16 bits.",
+                nameof(sector));
+        }
+
+        for (int offset = 0; offset < sector.Length; offset += 4)
+        {
+            if (_cdAudioQueue.Count == MaximumQueuedSampleFrames)
+                _cdAudioQueue.Dequeue();
+            _cdAudioQueue.Enqueue(new StereoSample(
+                BinaryPrimitives.ReadInt16LittleEndian(
+                    sector.Slice(offset, 2)),
+                BinaryPrimitives.ReadInt16LittleEndian(
+                    sector.Slice(offset + 2, 2))));
+        }
+    }
+
     private void ApplyControlToStatus()
     {
         ushort status = ReadRawRegister(StatusRegister);
@@ -359,6 +385,20 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         {
             left = 0;
             right = 0;
+        }
+
+        StereoSample cdAudio = _cdAudioQueue.TryDequeue(
+            out StereoSample queuedCdAudio)
+            ? queuedCdAudio
+            : default;
+        if ((Control & 1) != 0)
+        {
+            left += (long)cdAudio.Left *
+                DecodeSignedVolume(ReadRawRegister(CdVolumeLeftRegister)) /
+                0x8000;
+            right += (long)cdAudio.Right *
+                DecodeSignedVolume(ReadRawRegister(CdVolumeRightRegister)) /
+                0x8000;
         }
 
         left = left * DecodeVolume(ReadRawRegister(MainVolumeLeftRegister)) / 0x8000;
@@ -583,6 +623,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
             volume |= ~0x7FFF;
         return Math.Clamp(volume * 2, short.MinValue, short.MaxValue);
     }
+
+    private static int DecodeSignedVolume(ushort value) => (short)value;
 }
 
 public readonly record struct StereoSample(short Left, short Right);

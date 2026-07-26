@@ -44,6 +44,29 @@ public sealed class SpuAudioTests
         Assert.Equal(1, spu.Read16(SpuDevice.EndFlagsLowRegister) & 1);
     }
 
+    [Fact]
+    public void CdAudioSamplesAreMixedIntoStereoOutput()
+    {
+        var spu = new SpuDevice();
+        spu.Write16(SpuDevice.MainVolumeLeftRegister, 0x3FFF);
+        spu.Write16(SpuDevice.MainVolumeRightRegister, 0x3FFF);
+        spu.Write16(SpuDevice.CdVolumeLeftRegister, 0x7FFF);
+        spu.Write16(SpuDevice.CdVolumeRightRegister, 0x7FFF);
+        spu.Write16(SpuDevice.ControlRegister, 0x0001);
+        spu.QueueCdAudioSector(
+        [
+            0x10, 0x27,
+            0xF0, 0xD8,
+        ]);
+
+        spu.Tick(SpuDevice.CpuCyclesPerSample);
+        Span<short> samples = stackalloc short[2];
+
+        Assert.Equal(1, spu.DrainSamples(samples));
+        Assert.True(samples[0] > 0);
+        Assert.True(samples[1] < 0);
+    }
+
     private static SpuDevice CreateConfiguredVoice()
     {
         var spu = new SpuDevice();

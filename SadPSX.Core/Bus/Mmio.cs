@@ -39,8 +39,10 @@ public sealed class Mmio
         RootCounters = new RootCounters(InterruptController);
         Sio0 = new Sio0(InterruptController);
         PostStatus = new PostStatusRegister();
-        CdRom = new CdRomController(InterruptController);
         Spu = new SpuDevice();
+        CdRom = new CdRomController(InterruptController);
+        CdRom.CdAudioSectorReady += sector =>
+            Spu.QueueCdAudioSector(sector.Span);
         Gpu = new GpuDevice(InterruptController);
         Mdec = new MdecDevice();
         VideoTiming = new GpuVideoTiming(

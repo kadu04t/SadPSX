@@ -127,7 +127,9 @@ podem descrever múltiplas faixas de dados e áudio, usadas por `GetTN`, `GetTD`
 um disco, o leitor ISO9660 localiza `SYSTEM.CNF` e confirma o caminho, LBA e
 tamanho do executável de boot. As respostas de comandos respeitam uma latência
 mínima do controlador para evitar que a BIOS perca o IRQ antes de preparar a
-espera assíncrona.
+espera assíncrona. O comando `Play` avança faixas CD-DA no clock de 75 setores
+por segundo, envia PCM estéreo à SPU e gera `INT4` ao terminar a faixa com
+AutoPause.
 
 ### GPU
 
@@ -150,7 +152,9 @@ root counters com dotclock e HBlank.
 A SPU preserva os registradores MMIO, aplica o modo de `SPUCNT` em `SPUSTAT`,
 fornece 512 KiB de RAM de som e transfere dados manualmente ou por DMA4. As 24
 vozes decodificam blocos ADPCM, aplicam pitch, loop, key on/off, ADSR e volumes
-estéreo. O frontend envia a mistura PCM de 44,1 kHz para um stream SDL3.
+estéreo. A mistura também recebe o PCM das faixas CD-DA, respeitando volumes e
+o enable de áudio do CD. O frontend envia a saída de 44,1 kHz para um stream
+SDL3.
 
 ### MDEC
 
@@ -379,6 +383,7 @@ Os testes cobrem:
 - DMA0-DMA4 por blocos, DMA2 linked-list, DMA6/OTC e IRQ3.
 - MDEC com tabelas, RLE, IDCT e saídas de 4/8/15/24 bpp.
 - SPU com 24 vozes, ADPCM, pitch, ADSR, mistura estéreo e DMA4.
+- Reprodução CD-DA, AutoPause, `INT4` e mistura das faixas na SPU.
 - Saída de áudio SDL3 em 44,1 kHz no frontend.
 - SIO0, protocolo do controle digital, IRQ e POST da BIOS.
 - Tradução e roteamento do barramento.
@@ -436,6 +441,7 @@ O SadPSX ainda não possui:
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.
+- Relatórios periódicos de `Play`, matriz de volume do CD-ROM e áudio XA-ADPCM.
 - Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Controles analógicos, gamepads do host e memory cards.

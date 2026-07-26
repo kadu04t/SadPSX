@@ -242,11 +242,13 @@ internal sealed class DiagnosticConsole : IDisposable
             $"CD-ROM disco={(snapshot.HasDisc ? "sim" : "não")} " +
             $"IRQ={snapshot.CdRomInterruptFlags} " +
             $"IE=0x{snapshot.CdRomInterruptEnable:X2} " +
+            $"modo=0x{snapshot.CdRomMode:X2} " +
             $"cmd=0x{snapshot.CdRomLastCommand:X2} " +
             $"total={snapshot.CdRomCommands} " +
             $"busy={(snapshot.CdRomCommandBusy ? "sim" : "não")} " +
             $"LBA={snapshot.CdRomLogicalBlockAddress} " +
             $"lendo={(snapshot.CdRomReading ? "sim" : "não")} " +
+            $"tocando={(snapshot.CdRomPlaying ? "sim" : "não")} " +
             $"seek={(snapshot.CdRomSeeking ? "sim" : "não")} " +
             $"resultados={snapshot.CdRomResultBytes} " +
             $"setores={snapshot.CdRomBufferedSectors} " +

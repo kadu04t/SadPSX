@@ -208,6 +208,44 @@ public sealed class CdRomControllerTests
     }
 
     [Fact]
+    public void PlayAutoPausesAtEndOfAudioTrack()
+    {
+        var bus = new Bus();
+        using var disc = new TestDiscImage(
+            8,
+            [
+                new DiscTrack(1, 0, DiscTrackMode.Mode2),
+                new DiscTrack(2, 2, DiscTrackMode.Audio),
+                new DiscTrack(3, 5, DiscTrackMode.Audio),
+            ]);
+        bus.CdRom.LoadDisc(disc);
+        int audioSectors = 0;
+        bus.CdRom.CdAudioSectorReady += _ => audioSectors++;
+
+        WriteCommand(bus, 0x0E, 0x02);
+        Acknowledge(bus);
+        WriteCommand(bus, 0x02, 0x00, 0x02, 0x02);
+        Acknowledge(bus);
+        WriteCommand(bus, 0x03);
+
+        Assert.True(bus.CdRom.IsPlaying);
+        Assert.NotEqual(0, ReadResults(bus, 1)[0] & (1 << 7));
+        Acknowledge(bus);
+
+        bus.CdRom.Tick(CdRomController.SingleSpeedSectorCycles * 3);
+
+        Assert.False(bus.CdRom.IsPlaying);
+        Assert.Equal(4, bus.CdRom.CurrentLogicalBlockAddress);
+        Assert.Equal(3, audioSectors);
+        Assert.Equal(
+            (byte)CdRomInterruptType.DataEnd,
+            bus.CdRom.InterruptFlags);
+        byte status = ReadResults(bus, 1)[0];
+        Assert.NotEqual(0, status & (1 << 1));
+        Assert.Equal(0, status & (1 << 7));
+    }
+
+    [Fact]
     public void InitStartsMotorAndRestoresDefaultMode()
     {
         var bus = new Bus();
