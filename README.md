@@ -142,7 +142,8 @@ instruction cache completa ou timings internos de todas as instruções.
 - Uma imagem de BIOS válida do PlayStation 1 com exatamente 512 KiB
 
 Por motivos legais, nenhuma BIOS é distribuída com o projeto. Utilize uma
-imagem extraída de um console que você possui.
+imagem extraída de um console que você possui e coloque-a, por exemplo, em
+`BiosPS1/SCPH1001.BIN`. O diretório `BiosPS1/` é ignorado pelo Git.
 
 ## Compilação
 
@@ -211,7 +212,7 @@ Também é possível escolher outra imagem e quantidade de instruções:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\validate.ps1 `
-  -BiosPath C:\bios\SCPH1001.BIN `
+  -BiosPath .\BiosPS1\SCPH1001.BIN `
   -Instructions 2000000
 ```
 
@@ -277,6 +278,7 @@ SadPSX/
 │   ├── Memory/       # Testes de memória e MMIO
 │   ├── Gpu/          # Testes da GPU
 │   └── Dma/          # Testes de DMA
+├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
 ├── scripts/          # Validação automatizada
 └── SadPSX.slnx
 ```

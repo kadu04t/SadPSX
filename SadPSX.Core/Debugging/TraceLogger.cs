@@ -1,3 +1,4 @@
+using SadPSX.Core.Bus;
 using SadPSX.Core.Cpu;
 
 namespace SadPSX.Core.Debugging;
@@ -8,7 +9,7 @@ namespace SadPSX.Core.Debugging;
 /// o número do ciclo.
 ///
 /// O <see cref="TraceLogger"/> não altera a CPU nem o barramento — ele lê
-/// a instrução crua diretamente do <see cref="Memory.Bus"/> no PC atual
+/// a instrução crua diretamente do <see cref="Bus"/> no PC atual
 /// (antes de o Step() acontecer), desmonta com o <see cref="Disassembler"/>,
 /// e só então delega a execução para <see cref="PsxMachine.Step"/>.
 ///

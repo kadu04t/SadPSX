@@ -1,4 +1,6 @@
-namespace SadPSX.Core.Memory;
+using SadPSX.Core.Bus;
+
+namespace SadPSX.Core.Spu;
 
 public sealed class Spu : IClockedDevice, IMmioDevice
 {

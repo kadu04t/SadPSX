@@ -1,5 +1,5 @@
 using SadPSX.Core.Cpu;
-using SadPSX.Core.Memory;
+using SystemBus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Core;
 
@@ -18,19 +18,19 @@ public sealed class PsxMachine
 {
     private readonly List<IClockedDevice> _clockedDevices = new();
 
-    public Bus Bus { get; }
+    public SystemBus Bus { get; }
     public R3000A Cpu { get; }
     public ulong ClockCycles => Cpu.ClockCycles;
 
     public PsxMachine()
     {
-        Bus = new Bus();
+        Bus = new SystemBus();
         Cpu = new R3000A(Bus);
         RegisterClockedDevice(Bus.RootCounters);
         RegisterClockedDevice(Bus.Spu);
     }
 
-    public PsxMachine(Bus bus)
+    public PsxMachine(SystemBus bus)
     {
         Bus = bus ?? throw new ArgumentNullException(nameof(bus));
         Cpu = new R3000A(Bus);

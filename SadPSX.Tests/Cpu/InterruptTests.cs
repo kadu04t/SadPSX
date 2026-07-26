@@ -1,7 +1,10 @@
 using SadPSX.Core;
+using SadPSX.Core.Bios;
 using SadPSX.Core.Cpu;
-using SadPSX.Core.Memory;
+using SadPSX.Core.Interrupts;
+using SadPSX.Core.Timers;
 using Xunit;
+using Bus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Tests.Cpu;
 

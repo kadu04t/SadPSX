@@ -1,4 +1,4 @@
-namespace SadPSX.Core.Memory;
+namespace SadPSX.Core.Bios;
 
 /// <summary>
 /// ROM da BIOS do PlayStation 1: 512 KiB, somente leitura pela CPU.

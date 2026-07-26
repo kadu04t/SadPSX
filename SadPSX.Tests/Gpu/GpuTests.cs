@@ -1,6 +1,7 @@
-using SadPSX.Core.Memory;
+using SadPSX.Core.Interrupts;
 using Xunit;
-using GpuDevice = SadPSX.Core.Memory.Gpu;
+using Bus = SadPSX.Core.Bus.Bus;
+using GpuDevice = SadPSX.Core.Gpu.Gpu;
 
 namespace SadPSX.Tests.Gpu;
 

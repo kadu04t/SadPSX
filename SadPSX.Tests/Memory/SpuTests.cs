@@ -1,5 +1,6 @@
-using SadPSX.Core.Memory;
 using Xunit;
+using Bus = SadPSX.Core.Bus.Bus;
+using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Tests.Memory;
 
@@ -22,9 +23,9 @@ public sealed class SpuTests
     [Fact]
     public void ControlModeAppearsInStatusAfterShortDelay()
     {
-        var spu = new Spu();
+        var spu = new SpuDevice();
 
-        spu.Write16(Spu.ControlRegister, 0x0020);
+        spu.Write16(SpuDevice.ControlRegister, 0x0020);
         spu.Tick(1);
         Assert.Equal(0, spu.Status & 0x003F);
 
@@ -38,11 +39,11 @@ public sealed class SpuTests
     [Fact]
     public void StopModeClearsTransferRequestBits()
     {
-        var spu = new Spu();
-        spu.Write16(Spu.ControlRegister, 0x0030);
+        var spu = new SpuDevice();
+        spu.Write16(SpuDevice.ControlRegister, 0x0030);
         spu.Tick(2);
 
-        spu.Write16(Spu.ControlRegister, 0);
+        spu.Write16(SpuDevice.ControlRegister, 0);
         spu.Tick(2);
 
         Assert.Equal(0, spu.Status & 0x03BF);
@@ -51,11 +52,11 @@ public sealed class SpuTests
     [Fact]
     public void ManualWriteFlushesFifoIntoSoundRam()
     {
-        var spu = new Spu();
-        spu.Write16(Spu.TransferAddressRegister, 1);
-        spu.Write16(Spu.TransferFifoRegister, 0x1234);
+        var spu = new SpuDevice();
+        spu.Write16(SpuDevice.TransferAddressRegister, 1);
+        spu.Write16(SpuDevice.TransferFifoRegister, 0x1234);
 
-        spu.Write16(Spu.ControlRegister, 0x0010);
+        spu.Write16(SpuDevice.ControlRegister, 0x0010);
         spu.Tick(2);
 
         Assert.Equal(0x34, spu.SoundRam[8]);
@@ -65,9 +66,9 @@ public sealed class SpuTests
     [Fact]
     public void StatusRegisterIgnoresSoftwareWrites()
     {
-        var spu = new Spu();
+        var spu = new SpuDevice();
 
-        spu.Write16(Spu.StatusRegister, 0xFFFF);
+        spu.Write16(SpuDevice.StatusRegister, 0xFFFF);
 
         Assert.Equal(0, spu.Status);
     }

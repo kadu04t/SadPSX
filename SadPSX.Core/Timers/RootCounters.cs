@@ -1,4 +1,7 @@
-namespace SadPSX.Core.Memory;
+using SadPSX.Core.Bus;
+using SadPSX.Core.Interrupts;
+
+namespace SadPSX.Core.Timers;
 
 public sealed class RootCounters : IClockedDevice, IMmioDevice
 {

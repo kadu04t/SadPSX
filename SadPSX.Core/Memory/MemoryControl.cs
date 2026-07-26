@@ -1,3 +1,5 @@
+using SadPSX.Core.Bus;
+
 namespace SadPSX.Core.Memory;
 
 public sealed class MemoryControl : IMmioDevice

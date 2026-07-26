@@ -1,4 +1,6 @@
-namespace SadPSX.Core.Memory;
+using SadPSX.Core.Bus;
+
+namespace SadPSX.Core.Interrupts;
 
 public sealed class InterruptController : IMmioDevice
 {

@@ -1,4 +1,4 @@
-namespace SadPSX.Core.Memory;
+namespace SadPSX.Core.Bus;
 
 internal interface IMmioDevice
 {

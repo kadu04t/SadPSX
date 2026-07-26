@@ -1,5 +1,5 @@
+using SadPSX.Core.Bus;
 using SadPSX.Core.Cpu;
-using SadPSX.Core.Memory;
 
 namespace SadPSX.Core.Debugging;
 

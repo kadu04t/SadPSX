@@ -1,4 +1,11 @@
-namespace SadPSX.Core.Memory;
+using SadPSX.Core.Bios;
+using SadPSX.Core.Interrupts;
+using SadPSX.Core.Memory;
+using SadPSX.Core.Timers;
+using GpuDevice = SadPSX.Core.Gpu.Gpu;
+using SpuDevice = SadPSX.Core.Spu.Spu;
+
+namespace SadPSX.Core.Bus;
 
 /// <summary>
 /// Barramento de memória do PS1: traduz endereços virtuais (KUSEG/KSEG0/
@@ -54,8 +61,8 @@ public sealed class Bus
     public MemoryControl MemoryControl => Mmio.MemoryControl;
     public InterruptController InterruptController => Mmio.InterruptController;
     public RootCounters RootCounters => Mmio.RootCounters;
-    public Spu Spu => Mmio.Spu;
-    public Gpu Gpu => Mmio.Gpu;
+    public SpuDevice Spu => Mmio.Spu;
+    public GpuDevice Gpu => Mmio.Gpu;
     public ExpansionRegion1 Expansion1 { get; }
 
     public event Action<MemoryAccess>? MemoryAccessed;

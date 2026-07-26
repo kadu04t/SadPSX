@@ -1,5 +1,6 @@
 using System.Globalization;
 using SadPSX.Core;
+using SadPSX.Core.Bus;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
 using SadPSX.Core.Memory;

@@ -1,7 +1,7 @@
 using SadPSX.Core;
+using SadPSX.Core.Bios;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
-using SadPSX.Core.Memory;
 using Xunit;
 
 namespace SadPSX.Tests.Debugging;

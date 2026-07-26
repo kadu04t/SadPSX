@@ -1,7 +1,9 @@
 using SadPSX.Core;
+using SadPSX.Core.Bus;
 using SadPSX.Core.Debugging;
 using SadPSX.Core.Memory;
 using Xunit;
+using Bus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Tests.Debugging;
 

@@ -1,4 +1,5 @@
-using SadPSX.Core.Memory;
+using SadPSX.Core.Bus;
+using SystemBus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Core.Cpu;
 
@@ -12,7 +13,7 @@ public sealed class R3000A
     private const int RegisterCount = 32;
 
     private readonly uint[] _registers = new uint[RegisterCount];
-    private readonly Bus _bus;
+    private readonly SystemBus _bus;
 
     /// <summary>
     /// Endereço da próxima instrução que será executada.
@@ -70,7 +71,7 @@ public sealed class R3000A
 
     public Cop0 Cop0 { get; } = new();
 
-    public R3000A(Bus bus)
+    public R3000A(SystemBus bus)
     {
         _bus = bus ?? throw new ArgumentNullException(nameof(bus));
 
@@ -82,7 +83,7 @@ public sealed class R3000A
     /// Cria um Bus com sua própria RAM.
     /// </summary>
     public R3000A()
-        : this(new Bus())
+        : this(new SystemBus())
     {
     }
 
@@ -1014,7 +1015,7 @@ public sealed class R3000A
         if ((Cop0.Sr & StatusIsolateCacheBit) == 0)
             return false;
 
-        uint physicalAddress = Bus.TranslateToPhysical(
+        uint physicalAddress = SystemBus.TranslateToPhysical(
             virtualAddress,
             out MemorySegment segment);
 

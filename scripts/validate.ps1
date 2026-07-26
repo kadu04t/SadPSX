@@ -1,5 +1,5 @@
 param(
-    [string]$BiosPath = "Bios\SCPH1001.BIN",
+    [string]$BiosPath = "BiosPS1\SCPH1001.BIN",
     [uint64]$Instructions = 1000000,
     [switch]$NoRestore
 )
