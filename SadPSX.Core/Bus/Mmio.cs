@@ -7,6 +7,7 @@ using SadPSX.Core.Memory;
 using SadPSX.Core.Timers;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
 using GpuVideoTiming = SadPSX.Core.Gpu.VideoTiming;
+using MdecDevice = SadPSX.Core.Mdec.Mdec;
 using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Bus;
@@ -41,16 +42,23 @@ public sealed class Mmio
         CdRom = new CdRomController(InterruptController);
         Spu = new SpuDevice();
         Gpu = new GpuDevice(InterruptController);
+        Mdec = new MdecDevice();
         VideoTiming = new GpuVideoTiming(
             Gpu,
             RootCounters,
             InterruptController);
-        Dma = new DmaController(InterruptController, Gpu, CdRom, Spu);
+        Dma = new DmaController(
+            InterruptController,
+            Mdec,
+            Gpu,
+            CdRom,
+            Spu);
         _devices =
         [
             MemoryControl,
             InterruptController,
             Sio0,
+            Mdec,
             Dma,
             RootCounters,
             CdRom,
@@ -68,6 +76,7 @@ public sealed class Mmio
     public CdRomController CdRom { get; }
     public SpuDevice Spu { get; }
     public GpuDevice Gpu { get; }
+    public MdecDevice Mdec { get; }
     public GpuVideoTiming VideoTiming { get; }
     public DmaController Dma { get; }
     public uint? LastUnhandledReadAddress { get; private set; }

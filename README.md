@@ -104,14 +104,16 @@ O controlador DMA implementa os registradores dos sete canais, `DPCR` e
 `DICR`, incluindo prioridades, master enable, flags de conclusão, acknowledge,
 bus error e IRQ3. Os caminhos funcionais atuais são:
 
+- DMA0 por blocos da RAM para o MDEC.
+- DMA1 por blocos do MDEC para a RAM.
 - DMA2 em modo manual ou por blocos entre RAM e GPU.
 - DMA2 em linked-list para envio de listas de comandos GP0.
 - DMA3 por blocos do FIFO do CD-ROM para a RAM.
+- DMA4 por blocos entre RAM e SPU.
 - DMA6/OTC para criação reversa da ordering table.
 - Endereçamento DMA de 24 bits com espelhos da RAM.
 
-Os canais MDEC, SPU e PIO preservam seus registradores, mas ainda não
-executam transferências.
+O canal PIO preserva seus registradores, mas ainda não executa transferências.
 
 ### CD-ROM
 
@@ -139,10 +141,17 @@ root counters com dotclock e HBlank.
 
 ### SPU
 
-A camada inicial da SPU preserva os registradores MMIO, aplica o modo de
-`SPUCNT` em `SPUSTAT`, modela os requests de transferência e fornece RAM de som
-e FIFO para escritas manuais. Síntese de vozes e saída de áudio ainda não estão
-implementadas.
+A SPU preserva os registradores MMIO, aplica o modo de `SPUCNT` em `SPUSTAT`,
+fornece 512 KiB de RAM de som e transfere dados manualmente ou por DMA4. As 24
+vozes decodificam blocos ADPCM, aplicam pitch, loop, key on/off, ADSR e volumes
+estéreo. O frontend envia a mistura PCM de 44,1 kHz para um stream SDL3.
+
+### MDEC
+
+O Macroblock Decoder recebe comandos pela CPU ou DMA0, carrega tabelas de
+quantização e escala e decodifica blocos RLE com IDCT. A saída monocromática de
+4/8 bpp e colorida de 15/24 bpp fica disponível no FIFO e pode retornar à RAM
+por DMA1.
 
 ### Memória
 
@@ -160,11 +169,12 @@ O barramento implementa as seguintes regiões:
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
 | SIO0 | `0x1F801040-0x1F80104F` | Controle digital, timing e IRQ7 |
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
-| DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA3/DMA6 funcionais |
+| DMA | `0x1F801080-0x1F8010FF` | DMA0-DMA4 e DMA6 funcionais |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
 | GPU Ports | `0x1F801810-0x1F801817` | GP0/GP1 e VRAM funcionais |
+| MDEC | `0x1F801820-0x1F801827` | Comandos, tabelas, RLE/IDCT e FIFO |
 | CD-ROM Ports | `0x1F801800-0x1F801803` | Comandos, FIFOs, IRQ2 e setores |
-| SPU Registers | `0x1F801C00-0x1F801DFF` | Interface inicial |
+| SPU Registers | `0x1F801C00-0x1F801DFF` | Vozes, ADPCM, ADSR, RAM e DMA |
 | Cache Control | `0xFFFE0130` | Registrador implementado |
 
 Escritas destinadas à cache isolada são impedidas de alterar a RAM principal,
@@ -344,8 +354,10 @@ Os testes cobrem:
 - Handshakes, comandos de controle e status da GPU.
 - Pacotes GP0, transferências de VRAM e primitivas gráficas básicas.
 - Timing NTSC/PAL, dotclock, HBlank, VBlank e IRQ0.
-- DMA2 por blocos/linked-list, DMA6/OTC e IRQ3.
-- Registradores, status, FIFO e RAM de som da SPU.
+- DMA0-DMA4 por blocos, DMA2 linked-list, DMA6/OTC e IRQ3.
+- MDEC com tabelas, RLE, IDCT e saídas de 4/8/15/24 bpp.
+- SPU com 24 vozes, ADPCM, pitch, ADSR, mistura estéreo e DMA4.
+- Saída de áudio SDL3 em 44,1 kHz no frontend.
 - SIO0, protocolo do controle digital, IRQ e POST da BIOS.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
@@ -367,6 +379,7 @@ SadPSX/
 │   ├── Bios/         # ROM e carregamento da BIOS
 │   ├── CdRom/        # Subsistema de CD-ROM
 │   ├── Dma/          # Canais e controle de DMA
+│   ├── Mdec/         # Decodificação de vídeo comprimido
 │   ├── Timers/       # Root counters
 │   ├── Interrupts/   # I_STAT, I_MASK e fontes de IRQ
 │   ├── Spu/          # Interface e RAM de som
@@ -380,6 +393,7 @@ SadPSX/
 │   ├── Memory/       # Testes de memória e MMIO
 │   ├── Gpu/          # Testes da GPU
 │   ├── Dma/          # Testes de DMA
+│   ├── Mdec/         # Testes do MDEC e DMA0/1
 │   ├── Gte/          # Testes da GTE e COP2
 │   └── Controllers/  # Testes do SIO0 e controle digital
 ├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
@@ -394,12 +408,12 @@ O SadPSX ainda não possui:
 - Menus, configuração persistente e seleção gráfica de BIOS/disco.
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
-- Transferências DMA dos canais MDEC, SPU e PIO.
+- Transferências DMA do canal PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Execução de executáveis e sistema de arquivos ISO9660 a partir do CD-ROM.
-- Síntese da SPU e saída de áudio.
-- MDEC.
+- Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
+- Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Controles analógicos, gamepads do host e memory cards.
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
@@ -411,8 +425,8 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 ## Próximos passos
 
 Os próximos passos naturais são completar os comandos de iluminação/cor da GTE,
-avançar o boot de discos com ISO9660/EXE e adicionar memory cards. Depois,
-síntese da SPU, saída de áudio e MDEC completam os subsistemas mais visíveis.
+avançar o boot de discos com ISO9660/EXE, adicionar memory cards e refinar a
+precisão e temporização da GPU, SPU e MDEC.
 
 ## Licença
 

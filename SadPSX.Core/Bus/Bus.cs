@@ -7,6 +7,7 @@ using SadPSX.Core.Memory;
 using SadPSX.Core.Timers;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
 using GpuVideoTiming = SadPSX.Core.Gpu.VideoTiming;
+using MdecDevice = SadPSX.Core.Mdec.Mdec;
 using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Bus;
@@ -70,6 +71,7 @@ public sealed class Bus
     public CdRomController CdRom => Mmio.CdRom;
     public SpuDevice Spu => Mmio.Spu;
     public GpuDevice Gpu => Mmio.Gpu;
+    public MdecDevice Mdec => Mmio.Mdec;
     public GpuVideoTiming VideoTiming => Mmio.VideoTiming;
     public DmaController Dma => Mmio.Dma;
     public ExpansionRegion1 Expansion1 { get; }

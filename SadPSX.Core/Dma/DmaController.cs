@@ -3,6 +3,7 @@ using SadPSX.Core.CdRom;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
+using MdecDevice = SadPSX.Core.Mdec.Mdec;
 using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Dma;
@@ -31,12 +32,15 @@ public sealed class DmaController : IMmioDevice
     private const uint DmaAddressMask = 0x00FF_FFFC;
     private const uint DmaAddressLimit = 0x0080_0000;
     private const ulong MaximumTransferWords = 0x0100_0000;
+    private const int MdecInputChannel = 0;
+    private const int MdecOutputChannel = 1;
     private const int GpuChannel = 2;
     private const int CdRomChannel = 3;
     private const int SpuChannel = 4;
     private const int OtcChannel = 6;
 
     private readonly InterruptController _interruptController;
+    private readonly MdecDevice _mdec;
     private readonly GpuDevice _gpu;
     private readonly CdRomController _cdRom;
     private readonly SpuDevice _spu;
@@ -57,6 +61,7 @@ public sealed class DmaController : IMmioDevice
 
     public DmaController(
         InterruptController interruptController,
+        MdecDevice mdec,
         GpuDevice gpu,
         CdRomController cdRom,
         SpuDevice spu,
@@ -64,6 +69,7 @@ public sealed class DmaController : IMmioDevice
     {
         _interruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
+        _mdec = mdec ?? throw new ArgumentNullException(nameof(mdec));
         _gpu = gpu ?? throw new ArgumentNullException(nameof(gpu));
         _cdRom = cdRom ?? throw new ArgumentNullException(nameof(cdRom));
         _spu = spu ?? throw new ArgumentNullException(nameof(spu));
@@ -304,6 +310,16 @@ public sealed class DmaController : IMmioDevice
 
         switch (channel)
         {
+            case MdecInputChannel:
+                TransferMdecInput(state, channelControl, synchronizationMode);
+                CompleteChannel(channel);
+                break;
+
+            case MdecOutputChannel:
+                TransferMdecOutput(state, channelControl, synchronizationMode);
+                CompleteChannel(channel);
+                break;
+
             case GpuChannel:
                 TransferGpu(state, channelControl, synchronizationMode);
                 CompleteChannel(channel);
@@ -324,6 +340,80 @@ public sealed class DmaController : IMmioDevice
                 CompleteChannel(channel);
                 break;
         }
+    }
+
+    private void TransferMdecInput(
+        ChannelState channel,
+        uint channelControl,
+        uint synchronizationMode)
+    {
+        if ((channelControl & 1) == 0 || synchronizationMode == 2)
+        {
+            SignalBusError();
+            return;
+        }
+
+        TransferMdecWords(
+            channel,
+            channelControl,
+            synchronizationMode,
+            address => _mdec.WriteDmaWord(
+                _ram.Read32(address & RamAddressMask)));
+    }
+
+    private void TransferMdecOutput(
+        ChannelState channel,
+        uint channelControl,
+        uint synchronizationMode)
+    {
+        if ((channelControl & 1) != 0 || synchronizationMode == 2)
+        {
+            SignalBusError();
+            return;
+        }
+
+        TransferMdecWords(
+            channel,
+            channelControl,
+            synchronizationMode,
+            address => _ram.Write32(
+                address & RamAddressMask,
+                _mdec.ReadDmaWord()));
+    }
+
+    private void TransferMdecWords(
+        ChannelState channel,
+        uint channelControl,
+        uint synchronizationMode,
+        Action<uint> transferWord)
+    {
+        ulong wordCount = GetWordCount(
+            channel.BlockControl,
+            synchronizationMode);
+        if (wordCount > MaximumTransferWords)
+        {
+            SignalBusError();
+            return;
+        }
+
+        bool decrement = (channelControl & 2) != 0;
+        uint address = channel.BaseAddress & DmaAddressMask;
+        uint step = decrement ? unchecked((uint)-4) : 4;
+        for (ulong word = 0; word < wordCount; word++)
+        {
+            if (!IsRamDmaAddress(address))
+            {
+                SignalBusError();
+                break;
+            }
+
+            transferWord(address);
+            address = (address + step) & DmaAddressMask;
+        }
+
+        channel.BaseAddress = address & 0x00FF_FFFF;
+        if (synchronizationMode == 1)
+            channel.BlockControl &= 0x0000_FFFF;
     }
 
     private void TransferCdRom(

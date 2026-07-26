@@ -142,6 +142,7 @@ public sealed class PsxMachine
         Bus.Sio0.Reset();
         Bus.PostStatus.Reset();
         Bus.CdRom.Reset();
+        Bus.Mdec.Reset();
         Bus.Dma.Reset();
         Bus.RootCounters.Reset();
         Bus.Spu.Reset();
