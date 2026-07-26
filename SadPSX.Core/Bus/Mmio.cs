@@ -1,7 +1,9 @@
+using SadPSX.Core.Dma;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
 using SadPSX.Core.Timers;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
+using GpuVideoTiming = SadPSX.Core.Gpu.VideoTiming;
 using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Bus;
@@ -33,10 +35,16 @@ public sealed class Mmio
         RootCounters = new RootCounters(InterruptController);
         Spu = new SpuDevice();
         Gpu = new GpuDevice(InterruptController);
+        VideoTiming = new GpuVideoTiming(
+            Gpu,
+            RootCounters,
+            InterruptController);
+        Dma = new DmaController(InterruptController, Gpu);
         _devices =
         [
             MemoryControl,
             InterruptController,
+            Dma,
             RootCounters,
             Spu,
             Gpu,
@@ -48,6 +56,8 @@ public sealed class Mmio
     public RootCounters RootCounters { get; }
     public SpuDevice Spu { get; }
     public GpuDevice Gpu { get; }
+    public GpuVideoTiming VideoTiming { get; }
+    public DmaController Dma { get; }
     public uint? LastUnhandledReadAddress { get; private set; }
     public uint? LastUnhandledWriteAddress { get; private set; }
     public int MaxLoggedAccesses { get; set; } = 256;

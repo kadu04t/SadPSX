@@ -23,6 +23,8 @@ O SadPSX já consegue:
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
 - Responder aos handshakes básicos da GPU e da SPU.
+- Executar DMA2 para a GPU e DMA6 para tabelas OTC.
+- Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
@@ -30,9 +32,10 @@ O SadPSX já consegue:
 - Validar uma execução da BIOS com métricas e critérios reproduzíveis.
 
 Na validação atual, a BIOS SCPH-1001 executa pelo menos 20.000.000 de
-instruções sem exceções inesperadas, conclui os handshakes iniciais de SPU/GPU
-e alcança a configuração dos canais DMA. Isso ainda não representa um boot
-visual completo.
+instruções sem exceções inesperadas, usa DMA2/DMA6, recebe interrupções de
+VBlank e alcança 7.474 PCs únicos. Dos 64.754 acessos MMIO, somente 15 ainda
+não são tratados, todos na Expansion Region 2. Isso ainda não representa um
+boot visual completo.
 
 ## Componentes implementados
 
@@ -87,12 +90,31 @@ Os três root counters implementam contador, modo e target em
 - Flags de target/overflow limpas após leitura.
 - Sincronização básica com sinais de HBlank/VBlank e dotclock.
 
+### DMA
+
+O controlador DMA implementa os registradores dos sete canais, `DPCR` e
+`DICR`, incluindo prioridades, master enable, flags de conclusão, acknowledge,
+bus error e IRQ3. Os caminhos funcionais atuais são:
+
+- DMA2 em modo manual ou por blocos entre RAM e GPU.
+- DMA2 em linked-list para envio de listas de comandos GP0.
+- DMA6/OTC para criação reversa da ordering table.
+- Endereçamento DMA de 24 bits com espelhos da RAM.
+
+Os canais MDEC, CD-ROM, SPU e PIO preservam seus registradores, mas ainda não
+executam transferências.
+
 ### GPU
 
 A interface inicial da GPU implementa os ports `GP0/GPUREAD` e `GP1/GPUSTAT`,
 estado de reset, bits de prontidão, direção de DMA, controle do display,
 registradores internos básicos, atributos de desenho e IRQ1. Comandos de
 rasterização e VRAM ainda não são processados.
+
+O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
+scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
+o campo par/ímpar de `GPUSTAT`, gera IRQ0 no início de VBlank e alimenta os
+root counters com dotclock e HBlank.
 
 ### SPU
 
@@ -116,6 +138,7 @@ O barramento implementa as seguintes regiões:
 | BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implementada |
 | Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implementado |
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
+| DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA6 funcionais |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
 | GPU Ports | `0x1F801810-0x1F801817` | Interface inicial |
 | SPU Registers | `0x1F801C00-0x1F801DFF` | Interface inicial |
@@ -131,10 +154,12 @@ preservando o código carregado pela BIOS durante sua rotina de inicialização.
 loads e stores, diferenciando RAM em cache, RAM sem cache, scratchpad, MMIO,
 Expansion 1 e BIOS.
 
-Dispositivos futuros podem implementar `IClockedDevice` e ser registrados na
-`PsxMachine`; eles recebem os ciclos decorridos após cada instrução. Este modelo
-é uma base de escalonamento e ainda não representa contenção de barramento,
-instruction cache completa ou timings internos de todas as instruções.
+Dispositivos implementam `IClockedDevice` e são registrados na `PsxMachine`;
+eles recebem os ciclos decorridos após cada instrução. O timing de vídeo usa
+acumuladores inteiros para converter clocks da CPU em clocks NTSC/PAL sem
+depender de ponto flutuante. Este modelo ainda não representa contenção de
+barramento, instruction cache completa ou timings internos de todas as
+instruções e transferências.
 
 ## Requisitos
 
@@ -246,6 +271,8 @@ Os testes cobrem:
 - Controlador de interrupções e entrega ao COP0.
 - Timers, targets, divisores e geração de IRQ.
 - Handshakes, comandos de controle e status da GPU.
+- Timing NTSC/PAL, dotclock, HBlank, VBlank e IRQ0.
+- DMA2 por blocos/linked-list, DMA6/OTC e IRQ3.
 - Registradores, status, FIFO e RAM de som da SPU.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
@@ -288,7 +315,8 @@ SadPSX/
 O SadPSX ainda não possui:
 
 - Rasterização da GPU, VRAM funcional e saída de vídeo.
-- DMA.
+- Transferências DMA dos canais MDEC, CD-ROM, SPU e PIO.
+- Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - GTE/COP2.
 - CD-ROM e carregamento de jogos.
 - Síntese da SPU e saída de áudio.
@@ -297,15 +325,16 @@ O SadPSX ainda não possui:
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 
-Os demais periféricos MMIO ainda são stubs. Os clocks de dotclock, HBlank e
-VBlank já possuem pontos de integração nos timers, mas ainda dependem do
-gerador de timing de vídeo.
+Os demais periféricos MMIO ainda são stubs. O timing de vídeo cobre os sinais
+necessários à BIOS e aos timers, mas ainda aproxima detalhes de entrelaçamento,
+meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-Os próximos componentes naturais são DMA2/DMA6, timing de vídeo e VRAM com
-comandos gráficos básicos. Depois deles, CD-ROM, controles/memory cards e
-síntese da SPU poderão avançar sobre uma base de interrupções já funcional.
+O próximo componente natural é a VRAM com parser de pacotes GP0 e comandos
+gráficos básicos, aproveitando o DMA2 já funcional. Depois dele, CD-ROM,
+controles/memory cards e síntese da SPU poderão avançar sobre uma base de
+interrupções e temporização já funcional.
 
 ## Licença
 

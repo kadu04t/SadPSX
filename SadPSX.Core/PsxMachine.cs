@@ -26,6 +26,7 @@ public sealed class PsxMachine
     {
         Bus = new SystemBus();
         Cpu = new R3000A(Bus);
+        RegisterClockedDevice(Bus.VideoTiming);
         RegisterClockedDevice(Bus.RootCounters);
         RegisterClockedDevice(Bus.Spu);
     }
@@ -34,6 +35,7 @@ public sealed class PsxMachine
     {
         Bus = bus ?? throw new ArgumentNullException(nameof(bus));
         Cpu = new R3000A(Bus);
+        RegisterClockedDevice(Bus.VideoTiming);
         RegisterClockedDevice(Bus.RootCounters);
         RegisterClockedDevice(Bus.Spu);
     }
@@ -122,9 +124,11 @@ public sealed class PsxMachine
     public void Reset()
     {
         Bus.InterruptController.Reset();
+        Bus.Dma.Reset();
         Bus.RootCounters.Reset();
         Bus.Spu.Reset();
         Bus.Gpu.Reset();
+        Bus.VideoTiming.Reset();
         Cpu.Reset();
     }
 }

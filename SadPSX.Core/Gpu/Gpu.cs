@@ -48,6 +48,28 @@ public sealed class Gpu : IMmioDevice
 
     public uint VerticalDisplayRange { get; private set; }
 
+    public bool IsPalMode => (_status & (1u << 20)) != 0;
+
+    public bool IsInterlaced => (_status & (1u << 22)) != 0;
+
+    public uint DotClockDivisor
+    {
+        get
+        {
+            if ((_status & (1u << 16)) != 0)
+                return 7;
+
+            return ((_status >> 17) & 3) switch
+            {
+                0 => 10,
+                1 => 8,
+                2 => 5,
+                3 => 4,
+                _ => 10,
+            };
+        }
+    }
+
     public void Reset()
     {
         Array.Clear(_internalRegisters);
@@ -300,5 +322,22 @@ public sealed class Gpu : IMmioDevice
             _status |= DmaRequestBit;
         else
             _status &= ~DmaRequestBit;
+    }
+
+    internal void SetVideoTimingStatus(
+        bool inVBlank,
+        uint scanline,
+        ulong frameCount)
+    {
+        const uint oddLineBit = 1u << 31;
+        bool oddLine = !inVBlank &&
+            (((_status & (1u << 19)) != 0 && IsInterlaced)
+                ? (frameCount & 1) != 0
+                : (scanline & 1) != 0);
+
+        if (oddLine)
+            _status |= oddLineBit;
+        else
+            _status &= ~oddLineBit;
     }
 }

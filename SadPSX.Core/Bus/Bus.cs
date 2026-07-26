@@ -1,8 +1,10 @@
 using SadPSX.Core.Bios;
+using SadPSX.Core.Dma;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
 using SadPSX.Core.Timers;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
+using GpuVideoTiming = SadPSX.Core.Gpu.VideoTiming;
 using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Bus;
@@ -63,6 +65,8 @@ public sealed class Bus
     public RootCounters RootCounters => Mmio.RootCounters;
     public SpuDevice Spu => Mmio.Spu;
     public GpuDevice Gpu => Mmio.Gpu;
+    public GpuVideoTiming VideoTiming => Mmio.VideoTiming;
+    public DmaController Dma => Mmio.Dma;
     public ExpansionRegion1 Expansion1 { get; }
 
     public event Action<MemoryAccess>? MemoryAccessed;
@@ -73,6 +77,7 @@ public sealed class Bus
         Scratchpad = scratchpad ?? throw new ArgumentNullException(nameof(scratchpad));
         Bios = bios ?? throw new ArgumentNullException(nameof(bios));
         Mmio = mmio ?? throw new ArgumentNullException(nameof(mmio));
+        Mmio.Dma.ConnectRam(Ram);
         Expansion1 = expansion1 ?? throw new ArgumentNullException(nameof(expansion1));
     }
 
