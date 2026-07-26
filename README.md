@@ -125,7 +125,9 @@ podem descrever múltiplas faixas de dados e áudio, usadas por `GetTN`, `GetTD`
 `GetlocL` e `GetlocP`. `Init`, `GetID`, `SetSession`, `SeekL`, `SeekP` e
 `ReadTOC` modelam motor, busca e respostas secundárias temporizadas. Ao montar
 um disco, o leitor ISO9660 localiza `SYSTEM.CNF` e confirma o caminho, LBA e
-tamanho do executável de boot.
+tamanho do executável de boot. As respostas de comandos respeitam uma latência
+mínima do controlador para evitar que a BIOS perca o IRQ antes de preparar a
+espera assíncrona.
 
 ### GPU
 
@@ -432,8 +434,8 @@ O SadPSX ainda não possui:
 - Transferências DMA do canal PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
-- Boot completo do executável encontrado no ISO9660 ainda está em validação
-  com imagens comerciais.
+- Compatibilidade após a entrada do executável ainda está em validação com
+  imagens comerciais.
 - Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Controles analógicos, gamepads do host e memory cards.

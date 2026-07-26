@@ -65,12 +65,12 @@ public sealed class CdRomDmaTests
         bus.Write8(CdRomController.BaseAddress + 2, 0x02);
         bus.Write8(CdRomController.BaseAddress + 2, 0x00);
         bus.Write8(CdRomController.BaseAddress + 1, 0x02);
-        bus.CdRom.Tick(400);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles);
         Acknowledge(bus);
 
         SetIndex(bus, 0);
         bus.Write8(CdRomController.BaseAddress + 1, 0x06);
-        bus.CdRom.Tick(400);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles);
         Acknowledge(bus);
         bus.CdRom.Tick(CdRomController.SingleSpeedSectorCycles);
         Assert.Equal((byte)CdRomInterruptType.DataReady, bus.CdRom.InterruptFlags);

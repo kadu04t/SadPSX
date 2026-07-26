@@ -10,7 +10,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public const uint EndAddress = 0x1F80_1803;
     public const uint SingleSpeedSectorCycles = 33_868_800 / 75;
     public const uint DoubleSpeedSectorCycles = SingleSpeedSectorCycles / 2;
-    public const uint DefaultCommandDelayCycles = 400;
+    public const uint DefaultCommandDelayCycles = 20_000;
     public const uint InitializationCommandDelayCycles = 80_000;
     public const uint SecondResponseDelayCycles = 20_000;
     public const uint SeekResponseDelayCycles = 100_000;
@@ -63,6 +63,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public int DataCount => _data.Count;
     public int BufferedSectorCount => _sectorBuffers.Count;
     public bool IsReading => _reading;
+    public bool IsSeeking => _seeking;
     public int CurrentLogicalBlockAddress => _pendingLogicalBlockAddress;
     public ulong CommandCount { get; private set; }
 

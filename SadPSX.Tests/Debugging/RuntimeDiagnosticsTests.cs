@@ -21,6 +21,9 @@ public sealed class RuntimeDiagnosticsTests
         Assert.Equal(0xBFC0_0000u, before.Pc);
         Assert.Equal(0x2408_002Au, before.RawInstruction);
         Assert.Contains("addiu", before.Disassembly);
+        Assert.Equal(0, before.CdRomInterruptEnable);
+        Assert.False(before.CdRomCommandBusy);
+        Assert.False(before.CdRomSeeking);
         Assert.Equal(1ul, after.Instructions);
         Assert.True(after.ClockCycles > 0);
         Assert.Equal(42u, machine.Cpu.GetRegister(8));

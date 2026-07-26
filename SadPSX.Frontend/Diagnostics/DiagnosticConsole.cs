@@ -241,10 +241,15 @@ internal sealed class DiagnosticConsole : IDisposable
         WriteRaw(
             $"CD-ROM disco={(snapshot.HasDisc ? "sim" : "não")} " +
             $"IRQ={snapshot.CdRomInterruptFlags} " +
+            $"IE=0x{snapshot.CdRomInterruptEnable:X2} " +
             $"cmd=0x{snapshot.CdRomLastCommand:X2} " +
             $"total={snapshot.CdRomCommands} " +
+            $"busy={(snapshot.CdRomCommandBusy ? "sim" : "não")} " +
             $"LBA={snapshot.CdRomLogicalBlockAddress} " +
             $"lendo={(snapshot.CdRomReading ? "sim" : "não")} " +
+            $"seek={(snapshot.CdRomSeeking ? "sim" : "não")} " +
+            $"resultados={snapshot.CdRomResultBytes} " +
+            $"setores={snapshot.CdRomBufferedSectors} " +
             $"dados={snapshot.CdRomDataBytes} bytes");
         WriteRaw(
             $"DMA    transferências={snapshot.DmaTransfers}  " +

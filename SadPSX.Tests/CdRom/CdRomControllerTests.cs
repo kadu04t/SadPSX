@@ -9,6 +9,26 @@ namespace SadPSX.Tests.CdRom;
 public sealed class CdRomControllerTests
 {
     [Fact]
+    public void CommandResponseWaitsForControllerLatency()
+    {
+        var bus = new Bus();
+
+        SetIndex(bus, 0);
+        bus.Write8(CdRomController.BaseAddress + 1, 0x01);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles - 1);
+
+        Assert.Equal(0, bus.CdRom.InterruptFlags);
+        Assert.Equal(0, bus.CdRom.ResultCount);
+
+        bus.CdRom.Tick(1);
+
+        Assert.Equal(
+            (byte)CdRomInterruptType.Acknowledge,
+            bus.CdRom.InterruptFlags);
+        Assert.Equal(1, bus.CdRom.ResultCount);
+    }
+
+    [Fact]
     public void StatusTracksIndexAndParameterFifo()
     {
         var bus = new Bus();
@@ -37,7 +57,7 @@ public sealed class CdRomControllerTests
         bus.Write8(CdRomController.BaseAddress + 1, 0x01);
         Assert.True(bus.CdRom.CommandBusy);
 
-        bus.CdRom.Tick(400);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles);
 
         Assert.False(bus.CdRom.CommandBusy);
         Assert.Equal(0x10, bus.Read8(CdRomController.BaseAddress + 1));
@@ -50,7 +70,7 @@ public sealed class CdRomControllerTests
     {
         var bus = new Bus();
         bus.Write8(CdRomController.BaseAddress + 1, 0x1A);
-        bus.CdRom.Tick(400);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles);
 
         Assert.Equal((byte)CdRomInterruptType.Acknowledge, bus.CdRom.InterruptFlags);
         Assert.Equal(0x10, bus.Read8(CdRomController.BaseAddress + 1));
@@ -310,7 +330,7 @@ public sealed class CdRomControllerTests
         foreach (byte parameter in parameters)
             bus.Write8(CdRomController.BaseAddress + 2, parameter);
         bus.Write8(CdRomController.BaseAddress + 1, command);
-        bus.CdRom.Tick(400);
+        bus.CdRom.Tick(CdRomController.DefaultCommandDelayCycles);
     }
 
     private static void Acknowledge(Bus bus)
