@@ -106,10 +106,12 @@ executam transferências.
 
 ### GPU
 
-A interface inicial da GPU implementa os ports `GP0/GPUREAD` e `GP1/GPUSTAT`,
-estado de reset, bits de prontidão, direção de DMA, controle do display,
-registradores internos básicos, atributos de desenho e IRQ1. Comandos de
-rasterização e VRAM ainda não são processados.
+A GPU implementa os ports `GP0/GPUREAD` e `GP1/GPUSTAT`, uma VRAM de
+`1024x512` pixels de 16 bits e o parser de pacotes GP0 enviados pela CPU ou
+DMA2. Estão disponíveis preenchimento e cópia da VRAM, transferências
+CPU↔VRAM, polígonos, linhas, polylines e retângulos flat, Gouraud e
+texturizados, incluindo CLUT de 4/8 bits, texturas de 15 bits, clipping,
+offset de desenho, máscara e semitransparência.
 
 O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
 scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
@@ -140,7 +142,7 @@ O barramento implementa as seguintes regiões:
 | Interrupt Control | `0x1F801070-0x1F801077` | Implementado |
 | DMA | `0x1F801080-0x1F8010FF` | DMA2/DMA6 funcionais |
 | Root Counters | `0x1F801100-0x1F801128` | Implementados |
-| GPU Ports | `0x1F801810-0x1F801817` | Interface inicial |
+| GPU Ports | `0x1F801810-0x1F801817` | GP0/GP1 e VRAM funcionais |
 | SPU Registers | `0x1F801C00-0x1F801DFF` | Interface inicial |
 | Cache Control | `0xFFFE0130` | Registrador implementado |
 
@@ -271,6 +273,7 @@ Os testes cobrem:
 - Controlador de interrupções e entrega ao COP0.
 - Timers, targets, divisores e geração de IRQ.
 - Handshakes, comandos de controle e status da GPU.
+- Pacotes GP0, transferências de VRAM e primitivas gráficas básicas.
 - Timing NTSC/PAL, dotclock, HBlank, VBlank e IRQ0.
 - DMA2 por blocos/linked-list, DMA6/OTC e IRQ3.
 - Registradores, status, FIFO e RAM de som da SPU.
@@ -314,7 +317,8 @@ SadPSX/
 
 O SadPSX ainda não possui:
 
-- Rasterização da GPU, VRAM funcional e saída de vídeo.
+- Apresentação da VRAM em uma janela ou framebuffer de saída.
+- Rasterização pixel-perfect, dithering e temporização do FIFO da GPU.
 - Transferências DMA dos canais MDEC, CD-ROM, SPU e PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
 - GTE/COP2.
@@ -331,10 +335,10 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-O próximo componente natural é a VRAM com parser de pacotes GP0 e comandos
-gráficos básicos, aproveitando o DMA2 já funcional. Depois dele, CD-ROM,
-controles/memory cards e síntese da SPU poderão avançar sobre uma base de
-interrupções e temporização já funcional.
+O próximo componente natural é o CD-ROM, necessário para carregar executáveis
+e dados de jogos. Em seguida, controles/memory cards e síntese da SPU podem
+avançar sobre uma base que já executa a BIOS, transfere listas por DMA2 e
+rasteriza comandos gráficos básicos na VRAM.
 
 ## Licença
 

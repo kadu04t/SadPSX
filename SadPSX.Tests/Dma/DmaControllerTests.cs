@@ -63,6 +63,25 @@ public sealed class DmaControllerTests
     }
 
     [Fact]
+    public void GpuBlockTransferUploadsImageToVram()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Ram.Write32(0x100, 0xA000_0000);
+        bus.Ram.Write32(0x104, 0x000C_000B);
+        bus.Ram.Write32(0x108, 0x0001_0002);
+        bus.Ram.Write32(0x10C, 0x4321_1234);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0004);
+
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        Assert.Equal(0x1234u, bus.Gpu.Vram.ReadPixel(11, 12));
+        Assert.Equal(0x4321u, bus.Gpu.Vram.ReadPixel(12, 12));
+    }
+
+    [Fact]
     public void GpuLinkedListStopsAtEndMarker()
     {
         var bus = new Bus();

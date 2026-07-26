@@ -3,7 +3,7 @@ using SadPSX.Core.Interrupts;
 
 namespace SadPSX.Core.Gpu;
 
-public sealed class Gpu : IMmioDevice
+public sealed partial class Gpu : IMmioDevice
 {
     public const uint Gp0Address = 0x1F80_1810;
     public const uint GpuStatusAddress = 0x1F80_1814;
@@ -33,6 +33,8 @@ public sealed class Gpu : IMmioDevice
     public uint Status => _status;
 
     public uint GpuRead => _gpuRead;
+
+    public Vram Vram { get; } = new();
 
     public uint LastGp0Command { get; private set; }
 
@@ -75,6 +77,7 @@ public sealed class Gpu : IMmioDevice
         Array.Clear(_internalRegisters);
         _status = ResetStatus;
         _gpuRead = 0;
+        ResetGp0CommandBuffer();
         LastGp0Command = 0;
         LastGp1Command = 0;
         Gp0CommandCount = 0;
@@ -116,7 +119,22 @@ public sealed class Gpu : IMmioDevice
 
         return address switch
         {
-            Gp0Address => _gpuRead,
+            Gp0Address => ReadGpuRead(true),
+            GpuStatusAddress => _status,
+            _ => throw new InvalidOperationException(
+                $"Endereço 0x{address:X8} não pertence à GPU."),
+        };
+    }
+
+    public uint Peek32(uint address)
+    {
+        if ((address & 3) != 0)
+            throw new InvalidOperationException(
+                $"Leitura de 32 bits desalinhada na GPU: 0x{address:X8}.");
+
+        return address switch
+        {
+            Gp0Address => ReadGpuRead(false),
             GpuStatusAddress => _status,
             _ => throw new InvalidOperationException(
                 $"Endereço 0x{address:X8} não pertence à GPU."),
@@ -169,52 +187,6 @@ public sealed class Gpu : IMmioDevice
         };
     }
 
-    private void ExecuteGp0(uint value)
-    {
-        LastGp0Command = value;
-        Gp0CommandCount++;
-
-        byte command = (byte)(value >> 24);
-        switch (command)
-        {
-            case 0x1F:
-                _status |= InterruptRequestBit;
-                _interruptController.Request(InterruptSource.Gpu);
-                break;
-
-            case 0xE1:
-                _status = (_status & ~0x0000_07FFu) |
-                          (value & 0x0000_07FFu);
-                _internalRegisters[0] = value & 0x0000_0FFFu;
-                break;
-
-            case 0xE2:
-                _internalRegisters[2] = value & 0x000F_FFFF;
-                break;
-
-            case 0xE3:
-                _internalRegisters[3] = value & 0x000F_FFFF;
-                break;
-
-            case 0xE4:
-                _internalRegisters[4] = value & 0x000F_FFFF;
-                break;
-
-            case 0xE5:
-                _internalRegisters[5] = value & 0x003F_FFFF;
-                break;
-
-            case 0xE6:
-                _status = (_status & ~0x0000_1800u) |
-                          ((value & 3u) << 11);
-                _internalRegisters[6] = value & 3;
-                break;
-        }
-
-        _status |= ReadyForCommandBit | ReadyForDmaBlockBit;
-        UpdateDmaRequest();
-    }
-
     private void ExecuteGp1(uint value)
     {
         LastGp1Command = value;
@@ -230,8 +202,7 @@ public sealed class Gpu : IMmioDevice
                 break;
 
             case 0x01:
-                _status |= ReadyForCommandBit | ReadyForDmaBlockBit;
-                _status &= ~ReadyForVramReadBit;
+                ResetGp0CommandBuffer();
                 break;
 
             case 0x02:
