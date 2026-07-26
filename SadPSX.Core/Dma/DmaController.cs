@@ -3,6 +3,7 @@ using SadPSX.Core.CdRom;
 using SadPSX.Core.Interrupts;
 using SadPSX.Core.Memory;
 using GpuDevice = SadPSX.Core.Gpu.Gpu;
+using SpuDevice = SadPSX.Core.Spu.Spu;
 
 namespace SadPSX.Core.Dma;
 
@@ -32,11 +33,13 @@ public sealed class DmaController : IMmioDevice
     private const ulong MaximumTransferWords = 0x0100_0000;
     private const int GpuChannel = 2;
     private const int CdRomChannel = 3;
+    private const int SpuChannel = 4;
     private const int OtcChannel = 6;
 
     private readonly InterruptController _interruptController;
     private readonly GpuDevice _gpu;
     private readonly CdRomController _cdRom;
+    private readonly SpuDevice _spu;
     private readonly ChannelState[] _channels =
     [
         new(),
@@ -56,12 +59,14 @@ public sealed class DmaController : IMmioDevice
         InterruptController interruptController,
         GpuDevice gpu,
         CdRomController cdRom,
+        SpuDevice spu,
         Ram? ram = null)
     {
         _interruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
         _gpu = gpu ?? throw new ArgumentNullException(nameof(gpu));
         _cdRom = cdRom ?? throw new ArgumentNullException(nameof(cdRom));
+        _spu = spu ?? throw new ArgumentNullException(nameof(spu));
         _ram = ram ?? new Ram();
         Reset();
     }
@@ -309,6 +314,11 @@ public sealed class DmaController : IMmioDevice
                 CompleteChannel(channel);
                 break;
 
+            case SpuChannel:
+                TransferSpu(state, channelControl, synchronizationMode);
+                CompleteChannel(channel);
+                break;
+
             case OtcChannel:
                 TransferOtc(state, synchronizationMode);
                 CompleteChannel(channel);
@@ -413,6 +423,50 @@ public sealed class DmaController : IMmioDevice
             channel.BaseAddress = address & 0x00FF_FFFF;
             channel.BlockControl &= 0x0000_FFFF;
         }
+    }
+
+    private void TransferSpu(
+        ChannelState channel,
+        uint channelControl,
+        uint synchronizationMode)
+    {
+        if (synchronizationMode == 2)
+        {
+            SignalBusError();
+            return;
+        }
+
+        ulong wordCount = GetWordCount(channel.BlockControl, synchronizationMode);
+        if (wordCount > MaximumTransferWords)
+        {
+            SignalBusError();
+            return;
+        }
+
+        bool fromRam = (channelControl & 1) != 0;
+        bool decrement = (channelControl & 2) != 0;
+        uint address = channel.BaseAddress & DmaAddressMask;
+        uint step = decrement ? unchecked((uint)-4) : 4;
+
+        for (ulong word = 0; word < wordCount; word++)
+        {
+            if (!IsRamDmaAddress(address))
+            {
+                SignalBusError();
+                break;
+            }
+
+            if (fromRam)
+                _spu.WriteDmaWord(_ram.Read32(address & RamAddressMask));
+            else
+                _ram.Write32(address & RamAddressMask, _spu.ReadDmaWord());
+
+            address = (address + step) & DmaAddressMask;
+        }
+
+        channel.BaseAddress = address & 0x00FF_FFFF;
+        if (synchronizationMode == 1)
+            channel.BlockControl &= 0x0000_FFFF;
     }
 
     private void TransferGpuLinkedList(ChannelState channel)

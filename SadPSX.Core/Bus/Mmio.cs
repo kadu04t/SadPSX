@@ -45,7 +45,7 @@ public sealed class Mmio
             Gpu,
             RootCounters,
             InterruptController);
-        Dma = new DmaController(InterruptController, Gpu, CdRom);
+        Dma = new DmaController(InterruptController, Gpu, CdRom, Spu);
         _devices =
         [
             MemoryControl,

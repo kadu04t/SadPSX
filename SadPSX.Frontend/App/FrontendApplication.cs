@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using SadPSX.Core;
 using SadPSX.Core.Controllers;
+using SadPSX.Frontend.Audio;
 using SadPSX.Frontend.Diagnostics;
 using SadPSX.Frontend.Video;
 using SDL3;
@@ -17,6 +18,7 @@ internal sealed class FrontendApplication : IDisposable
     private readonly PsxMachine _machine;
     private readonly DiagnosticConsole _diagnosticConsole;
     private readonly SdlVideoOutput _videoOutput;
+    private readonly SdlAudioOutput _audioOutput;
     private readonly int _instructionBatchSize;
     private readonly int? _frameLimit;
     private readonly Stopwatch _runtime = Stopwatch.StartNew();
@@ -39,6 +41,8 @@ internal sealed class FrontendApplication : IDisposable
         _frameLimit = options.FrameLimit;
         _paused = options.StartPaused;
         _videoOutput = new SdlVideoOutput("SadPSX", 960, 720);
+        _audioOutput = new SdlAudioOutput();
+        _audioOutput.SetPaused(_paused);
     }
 
     public static int Run(string[] arguments)
@@ -69,7 +73,10 @@ internal sealed class FrontendApplication : IDisposable
             return 1;
         }
 
-        if (!SDL.Init(SDL.InitFlags.Video | SDL.InitFlags.Gamepad))
+        if (!SDL.Init(
+                SDL.InitFlags.Video |
+                SDL.InitFlags.Audio |
+                SDL.InitFlags.Gamepad))
         {
             Console.Error.WriteLine(
                 $"Erro ao inicializar SDL3: {SDL.GetError()}");
@@ -98,6 +105,7 @@ internal sealed class FrontendApplication : IDisposable
     public void Dispose()
     {
         _videoOutput.Dispose();
+        _audioOutput.Dispose();
         _diagnosticConsole.Dispose();
     }
 
@@ -115,6 +123,7 @@ internal sealed class FrontendApplication : IDisposable
                 {
                     _machine.Run((ulong)_instructionBatchSize);
                     _diagnosticConsole.ObserveExecution(_machine.Cpu.Pc);
+                    _audioOutput.Pump(_machine.Bus.Spu);
                 }
                 else
                     SDL.Delay(1);
@@ -219,6 +228,7 @@ internal sealed class FrontendApplication : IDisposable
 
             case SDL.Scancode.Space:
                 _paused = !_paused;
+                _audioOutput.SetPaused(_paused);
                 Console.WriteLine(
                     _paused
                         ? "Emulação pausada."
@@ -227,6 +237,7 @@ internal sealed class FrontendApplication : IDisposable
 
             case SDL.Scancode.R:
                 _machine.Reset();
+                _audioOutput.Clear();
                 _diagnosticConsole.Reset();
                 _lastTitleInstructionCount = 0;
                 Console.WriteLine("Console reiniciado.");
