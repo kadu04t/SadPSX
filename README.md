@@ -25,6 +25,7 @@ O SadPSX já consegue:
 - Responder aos handshakes básicos da GPU e da SPU.
 - Executar DMA2 para a GPU e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
+- Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
 - Contabilizar custos aproximados de acesso à memória.
@@ -180,6 +181,26 @@ Na raiz do repositório:
 dotnet build SadPSX.slnx
 ```
 
+## Executando o frontend
+
+O frontend SDL3 inicia a BIOS e apresenta a região ativa da VRAM em uma janela:
+
+```powershell
+dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN
+```
+
+A emulação roda continuamente e a primeira tela da BIOS pode levar algum tempo
+para aparecer enquanto o interpretador executa a inicialização. Atalhos:
+
+- `Espaço`: pausa ou continua a emulação.
+- `R`: reinicia o console.
+- `F11`: alterna tela cheia.
+- `Esc`: encerra o frontend.
+
+Use `--batch N` para ajustar quantas instruções são executadas entre eventos da
+janela. `--paused` inicia pausado e `--frames N` limita a apresentação para
+diagnósticos automatizados.
+
 ## Executando a BIOS
 
 ```powershell
@@ -303,6 +324,7 @@ SadPSX/
 │   ├── Debugging/    # Disassembler, debugger e validação
 │   └── PsxMachine.cs
 ├── SadPSX.Cli/       # Executor de BIOS por linha de comando
+├── SadPSX.Frontend/  # Janela SDL3 e loop interativo
 ├── SadPSX.Tests/
 │   ├── Cpu/          # Testes da CPU
 │   ├── Memory/       # Testes de memória e MMIO
@@ -317,7 +339,8 @@ SadPSX/
 
 O SadPSX ainda não possui:
 
-- Apresentação da VRAM em uma janela ou framebuffer de saída.
+- Menus, configuração persistente e seleção gráfica de BIOS/disco.
+- Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização pixel-perfect, dithering e temporização do FIFO da GPU.
 - Transferências DMA dos canais MDEC, CD-ROM, SPU e PIO.
 - Chopping, contenção de barramento e duração assíncrona das transferências DMA.
