@@ -17,6 +17,8 @@ bool trace = false;
 bool showMmioLog = false;
 bool dumpRegisters = false;
 bool validate = false;
+bool stopOnUnexpected = false;
+string? discPath = null;
 int? loopThreshold = null;
 var pcBreakpoints = new HashSet<uint>();
 var memoryBreakpoints = new HashSet<uint>();
@@ -53,6 +55,15 @@ try
 
             case "--validate":
                 validate = true;
+                break;
+
+            case "--disc":
+                discPath = Path.GetFullPath(
+                    ReadOptionValue(args, ref argumentIndex, option));
+                break;
+
+            case "--stop-on-unexpected":
+                stopOnUnexpected = true;
                 break;
 
             case "--break-pc":
@@ -98,11 +109,20 @@ if (!File.Exists(biosPath))
     return 1;
 }
 
+if (discPath is not null && !File.Exists(discPath))
+{
+    Console.Error.WriteLine(
+        $"Erro: imagem de disco não encontrada: {discPath}");
+    return 1;
+}
+
 var machine = new PsxMachine();
 
 try
 {
     machine.LoadBios(biosPath);
+    if (discPath is not null)
+        machine.LoadDisc(discPath);
 }
 catch (Exception exception)
 {
@@ -111,9 +131,14 @@ catch (Exception exception)
 }
 
 Console.WriteLine($"BIOS carregada: {biosPath}");
+if (discPath is not null)
+    Console.WriteLine($"Disco carregado: {discPath}");
 Console.WriteLine($"PC inicial: 0x{machine.Cpu.Pc:X8}");
 Console.WriteLine($"Executando até {stepCount} instruções{(trace ? " (com trace)" : "")}...");
 Console.WriteLine();
+
+if (stopOnUnexpected)
+    return RunUntilUnexpectedException(machine, stepCount);
 
 if (validate)
 {
@@ -221,6 +246,70 @@ static uint ParseAddress(string value)
     return address;
 }
 
+static int RunUntilUnexpectedException(
+    PsxMachine machine,
+    ulong instructionLimit)
+{
+    CpuExceptionInfo? unexpectedException = null;
+
+    void CaptureException(CpuExceptionInfo exception)
+    {
+        if (exception.Code is not ExceptionCode.Interrupt and
+            not ExceptionCode.Syscall)
+        {
+            unexpectedException ??= exception;
+        }
+    }
+
+    machine.Cpu.ExceptionOccurred += CaptureException;
+    try
+    {
+        while (machine.Cpu.Cycles < instructionLimit &&
+               unexpectedException is null)
+        {
+            machine.Step();
+        }
+    }
+    finally
+    {
+        machine.Cpu.ExceptionOccurred -= CaptureException;
+    }
+
+    if (unexpectedException is not CpuExceptionInfo exception)
+    {
+        Console.WriteLine(
+            $"Nenhuma exceção inesperada em {machine.Cpu.Cycles} instruções.");
+        return 0;
+    }
+
+    uint rawInstruction = machine.Bus.Peek32(exception.FaultingPc);
+    string disassembly = Disassembler.Disassemble(
+        new Instruction(rawInstruction),
+        exception.FaultingPc);
+    Console.WriteLine(
+        $"Exceção: {exception.Code} em 0x{exception.FaultingPc:X8} " +
+        $"após {machine.Cpu.Cycles} instruções");
+    Console.WriteLine(
+        $"Opcode: 0x{rawInstruction:X8}  {disassembly}");
+    Console.WriteLine(
+        $"EPC=0x{exception.Epc:X8} " +
+        $"delay-slot={exception.InBranchDelaySlot}");
+    Console.WriteLine();
+    Console.WriteLine("Memória próxima:");
+    for (int offset = -16; offset <= 16; offset += 4)
+    {
+        uint address = unchecked(exception.FaultingPc + (uint)offset);
+        Console.WriteLine(
+            $"  0x{address:X8}: 0x{machine.Bus.Peek32(address):X8}");
+    }
+
+    using var debugger = new ExecutionDebugger(machine);
+    Console.WriteLine();
+    Console.WriteLine("[registradores]");
+    Console.WriteLine(debugger.FormatRegisters());
+    return 2;
+}
+
 static void PrintMmioLog(Mmio mmio)
 {
     Console.WriteLine();
@@ -293,6 +382,8 @@ static void PrintUsage()
     Console.WriteLine("  --mmio-log              Mostra primeiros acessos e resumo MMIO");
     Console.WriteLine("  --dump-registers        Mostra os registradores ao finalizar");
     Console.WriteLine("  --validate              Executa e resume uma validação da BIOS");
+    Console.WriteLine("  --disc <imagem>         Conecta uma imagem BIN ou CUE");
+    Console.WriteLine("  --stop-on-unexpected    Para na primeira exceção inesperada");
     Console.WriteLine("  --break-pc <endereço>   Para antes de executar o PC informado");
     Console.WriteLine("  --break-memory <addr>   Para após acessar o endereço informado");
     Console.WriteLine("  --checkpoint <endereço> Registra ciclo e MMIO ao alcançar o PC");

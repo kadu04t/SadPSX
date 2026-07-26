@@ -59,6 +59,18 @@ public sealed class Cop2InstructionTests
         Assert.Equal(100u, cpu.Gte.ReadDataRegister(24));
     }
 
+    [Fact]
+    public void RaymanNcdsOpcodeDispatchesWithoutReservedInstruction()
+    {
+        var cpu = new R3000A();
+        CpuExceptionInfo? raisedException = null;
+        cpu.ExceptionOccurred += exception => raisedException = exception;
+
+        cpu.Execute(new Instruction(0x4AE8_0413));
+
+        Assert.Null(raisedException);
+    }
+
     private static Instruction Cop2Transfer(int rs, int rt, int rd) =>
         new(0x4800_0000u |
             ((uint)rs << 21) |

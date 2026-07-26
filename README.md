@@ -61,7 +61,8 @@ A implementação interpretada do R3000A inclui:
 O COP2 implementa `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2` e `SWC2`, incluindo
 load delay nas transferências para a CPU. A GTE possui FIFOs e semântica dos
 registradores de dados/controle, além dos comandos `RTPS`, `RTPT`, `NCLIP`,
-`OP`, `MVMVA`, `SQR`, `AVSZ3` e `AVSZ4`.
+`OP`, `MVMVA`, `SQR`, `AVSZ3`, `AVSZ4`, `NCS`, `NCT`, `NCCS`, `NCCT`,
+`NCDS` e `NCDT`.
 
 ### COP0
 
@@ -308,8 +309,20 @@ dotnet run --project SadPSX.Cli -- caminho\para\BIOS.BIN 1000000 `
 - `--mmio-log` mostra os primeiros acessos MMIO e um resumo por endereço.
 - `--dump-registers` imprime GPRs, `HI/LO`, PC e registradores do COP0.
 - `--validate` executa um smoke test e resume clocks, PCs, MMIO e exceções.
+- `--disc` conecta uma imagem BIN ou CUE para testes de boot sem frontend.
+- `--stop-on-unexpected` interrompe na primeira exceção inesperada e mostra
+  opcode, memória próxima e registradores.
 
 Os endereços podem ser informados em decimal ou hexadecimal com prefixo `0x`.
+
+Para investigar o boot de um jogo em velocidade de `Release`:
+
+```powershell
+dotnet run -c Release --project SadPSX.Cli -- `
+  .\BiosPS1\SCPH1001.BIN 600000000 `
+  --disc ".\GamesPS1\Jogo\Jogo.cue" `
+  --stop-on-unexpected
+```
 
 ### Validação automatizada
 
@@ -404,6 +417,7 @@ SadPSX/
 │   ├── Gte/          # Testes da GTE e COP2
 │   └── Controllers/  # Testes do SIO0 e controle digital
 ├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
+├── GamesPS1/         # Imagens locais de jogos, ignoradas pelo Git
 ├── scripts/          # Validação automatizada
 └── SadPSX.slnx
 ```
@@ -432,9 +446,10 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-Os próximos passos naturais são validar o salto da BIOS para o `PS-X EXE`,
-refinar FIFO/timing da GPU, completar comandos de iluminação/cor da GTE e
-adicionar memory cards. O bloco futuro de otimização mantém benchmarks,
+Os próximos passos naturais são ampliar os testes de compatibilidade após o
+salto da BIOS para o `PS-X EXE`, refinar FIFO/timing da GPU, completar os
+comandos de cor restantes da GTE e adicionar memory cards. O bloco futuro de
+otimização mantém benchmarks,
 execução da CPU em lotes, caminhos rápidos do barramento, scheduler de eventos
 e separação entre diagnóstico normal e trace completo.
 

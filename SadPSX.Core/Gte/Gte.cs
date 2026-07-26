@@ -108,10 +108,40 @@ public sealed class Gte
             0x06 => ExecuteNclip(),
             0x0C => ExecuteOuterProduct(command),
             0x12 => ExecuteMatrixVectorMultiply(command),
+            0x13 => ExecuteNormalColor(
+                command,
+                vectorCount: 1,
+                multiplyColor: true,
+                depthCue: true),
+            0x16 => ExecuteNormalColor(
+                command,
+                vectorCount: 3,
+                multiplyColor: true,
+                depthCue: true),
+            0x1B => ExecuteNormalColor(
+                command,
+                vectorCount: 1,
+                multiplyColor: true,
+                depthCue: false),
+            0x1E => ExecuteNormalColor(
+                command,
+                vectorCount: 1,
+                multiplyColor: false,
+                depthCue: false),
+            0x20 => ExecuteNormalColor(
+                command,
+                vectorCount: 3,
+                multiplyColor: false,
+                depthCue: false),
             0x28 => ExecuteSquare(command),
             0x2D => ExecuteAverageDepth(3),
             0x2E => ExecuteAverageDepth(4),
             0x30 => ExecuteRtpt(command),
+            0x3F => ExecuteNormalColor(
+                command,
+                vectorCount: 3,
+                multiplyColor: true,
+                depthCue: false),
             _ => false,
         };
 
@@ -223,6 +253,145 @@ public sealed class Gte
         }
 
         return true;
+    }
+
+    private bool ExecuteNormalColor(
+        uint command,
+        int vectorCount,
+        bool multiplyColor,
+        bool depthCue)
+    {
+        int shift = (command & (1u << 19)) != 0 ? 12 : 0;
+        bool limitMode = (command & (1u << 10)) != 0;
+
+        for (int vectorIndex = 0;
+             vectorIndex < vectorCount;
+             vectorIndex++)
+        {
+            ApplyLightMatrix(vectorIndex, shift, limitMode);
+            ApplyColorMatrix(shift, limitMode);
+
+            if (multiplyColor)
+                MultiplyPrimaryColor();
+            if (depthCue)
+                ApplyDepthCue(shift, limitMode);
+            else if (multiplyColor)
+                ShiftMacVector(shift, limitMode);
+
+            PushColor();
+        }
+
+        return true;
+    }
+
+    private void ApplyLightMatrix(
+        int vectorIndex,
+        int shift,
+        bool limitMode)
+    {
+        (int x, int y, int z) = ReadVector(vectorIndex);
+        for (int row = 0; row < 3; row++)
+        {
+            long value =
+                (long)MatrixElement(1, row, 0) * x +
+                (long)MatrixElement(1, row, 1) * y +
+                (long)MatrixElement(1, row, 2) * z;
+            SetMacAndIr(row + 1, value >> shift, limitMode);
+        }
+    }
+
+    private void ApplyColorMatrix(int shift, bool limitMode)
+    {
+        int ir1 = DataSigned16(9);
+        int ir2 = DataSigned16(10);
+        int ir3 = DataSigned16(11);
+        for (int row = 0; row < 3; row++)
+        {
+            long value =
+                (long)ControlSigned(13 + row) * 0x1000 +
+                (long)MatrixElement(2, row, 0) * ir1 +
+                (long)MatrixElement(2, row, 1) * ir2 +
+                (long)MatrixElement(2, row, 2) * ir3;
+            SetMacAndIr(row + 1, value >> shift, limitMode);
+        }
+    }
+
+    private void MultiplyPrimaryColor()
+    {
+        uint color = _data[6];
+        for (int index = 1; index <= 3; index++)
+        {
+            int component = (byte)(color >> ((index - 1) * 8));
+            long value =
+                (long)component * DataSigned16(8 + index) * 16;
+            _data[24 + index] = unchecked((uint)value);
+        }
+    }
+
+    private void ApplyDepthCue(int shift, bool limitMode)
+    {
+        int interpolation = DataSigned16(8);
+        for (int index = 1; index <= 3; index++)
+        {
+            long current = unchecked((int)_data[24 + index]);
+            long difference =
+                ((long)ControlSigned(20 + index) << 12) - current;
+            int differenceIr = ClampIr(
+                index,
+                difference >> shift,
+                limitMode: false);
+            long value = current + (long)differenceIr * interpolation;
+            SetMacAndIr(index, value >> shift, limitMode);
+        }
+    }
+
+    private void ShiftMacVector(int shift, bool limitMode)
+    {
+        for (int index = 1; index <= 3; index++)
+        {
+            long value = unchecked((int)_data[24 + index]);
+            SetMacAndIr(index, value >> shift, limitMode);
+        }
+    }
+
+    private void PushColor()
+    {
+        uint sourceColor = _data[6];
+        uint red = (uint)ClampColor(
+            unchecked((int)_data[25]) >> 4,
+            0);
+        uint green = (uint)ClampColor(
+            unchecked((int)_data[26]) >> 4,
+            1);
+        uint blue = (uint)ClampColor(
+            unchecked((int)_data[27]) >> 4,
+            2);
+        uint color =
+            red |
+            (green << 8) |
+            (blue << 16) |
+            (sourceColor & 0xFF00_0000);
+
+        _data[20] = _data[21];
+        _data[21] = _data[22];
+        _data[22] = color;
+    }
+
+    private int ClampColor(long value, int component)
+    {
+        if (value < 0)
+        {
+            _flags |= 1u << (21 - component);
+            return 0;
+        }
+
+        if (value > byte.MaxValue)
+        {
+            _flags |= 1u << (21 - component);
+            return byte.MaxValue;
+        }
+
+        return (int)value;
     }
 
     private bool ExecuteSquare(uint command)

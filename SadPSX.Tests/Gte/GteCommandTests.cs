@@ -87,12 +87,68 @@ public sealed class GteCommandTests
         Assert.Equal(789u, gte.ReadDataRegister(11));
     }
 
+    [Fact]
+    public void NcdsAppliesLightingColorAndDepthCue()
+    {
+        var gte = CreateIdentityLightingGte();
+        WriteVector(gte, 0, 0x1000, 0x1000, 0x1000);
+        gte.WriteDataRegister(6, 0x2CFF_8040);
+
+        Assert.True(gte.ExecuteCommand(0x000E_0413));
+
+        Assert.Equal(0x0000_0400u, gte.ReadDataRegister(9));
+        Assert.Equal(0x0000_0800u, gte.ReadDataRegister(10));
+        Assert.Equal(0x0000_0FF0u, gte.ReadDataRegister(11));
+        Assert.Equal(0x2CFF_8040u, gte.ReadDataRegister(22));
+        Assert.Equal(0u, gte.ReadControlRegister(31));
+    }
+
+    [Fact]
+    public void NcdtProcessesThreeVectorsAndAdvancesColorFifo()
+    {
+        var gte = CreateIdentityLightingGte();
+        WriteVector(gte, 0, 0x1000, 0, 0);
+        WriteVector(gte, 1, 0, 0x1000, 0);
+        WriteVector(gte, 2, 0, 0, 0x1000);
+        gte.WriteDataRegister(6, 0x2CFF_FFFF);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | 0x16));
+
+        Assert.Equal(0x2C00_00FFu, gte.ReadDataRegister(20));
+        Assert.Equal(0x2C00_FF00u, gte.ReadDataRegister(21));
+        Assert.Equal(0x2CFF_0000u, gte.ReadDataRegister(22));
+    }
+
+    [Fact]
+    public void NcsSetsColorSaturationFlags()
+    {
+        var gte = CreateIdentityLightingGte();
+        WriteVector(gte, 0, 0x2000, 0x2000, 0x2000);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | 0x1E));
+
+        Assert.Equal(0x00FF_FFFFu, gte.ReadDataRegister(22));
+        Assert.Equal(0x0038_0000u, gte.ReadControlRegister(31));
+    }
+
     private static SadPSX.Core.Gte.Gte CreateIdentityGte()
     {
         var gte = new SadPSX.Core.Gte.Gte();
         gte.WriteControlRegister(0, 0x0000_1000);
         gte.WriteControlRegister(2, 0x0000_1000);
         gte.WriteControlRegister(4, 0x0000_1000);
+        return gte;
+    }
+
+    private static SadPSX.Core.Gte.Gte CreateIdentityLightingGte()
+    {
+        var gte = new SadPSX.Core.Gte.Gte();
+        gte.WriteControlRegister(8, 0x0000_1000);
+        gte.WriteControlRegister(10, 0x0000_1000);
+        gte.WriteControlRegister(12, 0x0000_1000);
+        gte.WriteControlRegister(16, 0x0000_1000);
+        gte.WriteControlRegister(18, 0x0000_1000);
+        gte.WriteControlRegister(20, 0x0000_1000);
         return gte;
     }
 
