@@ -1,5 +1,6 @@
 using SadPSX.Core.Bus;
 using SystemBus = SadPSX.Core.Bus.Bus;
+using GeometryEngine = SadPSX.Core.Gte.Gte;
 
 namespace SadPSX.Core.Cpu;
 
@@ -70,6 +71,7 @@ public sealed class R3000A
     private uint _currentStepCycles;
 
     public Cop0 Cop0 { get; } = new();
+    public GeometryEngine Gte { get; } = new();
 
     public R3000A(SystemBus bus)
     {
@@ -119,6 +121,7 @@ public sealed class R3000A
         _currentStepCycles = 0;
 
         Cop0.Reset();
+        Gte.Reset();
     }
 
     /// <summary>
@@ -486,6 +489,18 @@ public sealed class R3000A
                 ExecuteCop0(instruction);
                 break;
 
+            case 0x12: // COP2 / GTE
+                ExecuteCop2(instruction);
+                break;
+
+            case 0x32: // LWC2 rt, offset(rs)
+                ExecuteLwc2(instruction);
+                break;
+
+            case 0x3A: // SWC2 rt, offset(rs)
+                ExecuteSwc2(instruction);
+                break;
+
             default:
                 RaiseException(ExceptionCode.ReservedInstruction);
                 break;
@@ -587,6 +602,89 @@ public sealed class R3000A
             // O registrador de destino NÃO é modificado quando a exceção
             // é disparada — o hardware real intercepta antes da escrita.
             RaiseException(ExceptionCode.Overflow);
+        }
+    }
+
+    private void ExecuteCop2(Instruction instruction)
+    {
+        switch (instruction.Rs)
+        {
+            case 0x00:
+                LoadRegister(instruction.Rt, Gte.ReadDataRegister(instruction.Rd));
+                break;
+
+            case 0x02:
+                LoadRegister(instruction.Rt, Gte.ReadControlRegister(instruction.Rd));
+                break;
+
+            case 0x04:
+                Gte.WriteDataRegister(instruction.Rd, GetRegister(instruction.Rt));
+                break;
+
+            case 0x06:
+                Gte.WriteControlRegister(instruction.Rd, GetRegister(instruction.Rt));
+                break;
+
+            default:
+                if (instruction.Rs < 0x10 ||
+                    !Gte.ExecuteCommand(instruction.Value & 0x01FF_FFFF))
+                {
+                    RaiseException(ExceptionCode.ReservedInstruction);
+                }
+                break;
+        }
+    }
+
+    private void ExecuteLwc2(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorLoad))
+            return;
+
+        if ((address & 0x03) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorLoad, address);
+            return;
+        }
+
+        AccountMemoryAccess(address, MemoryAccessKind.Read);
+
+        try
+        {
+            Gte.WriteDataRegister(instruction.Rt, _bus.Read32(address));
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
+        }
+    }
+
+    private void ExecuteSwc2(Instruction instruction)
+    {
+        uint address = GetEffectiveAddress(instruction);
+
+        if (RejectUserDataAccess(address, ExceptionCode.AddressErrorStore))
+            return;
+
+        if ((address & 0x03) != 0)
+        {
+            RaiseAddressException(ExceptionCode.AddressErrorStore, address);
+            return;
+        }
+
+        if (IsIsolatedCacheRamAccess(address))
+            return;
+
+        AccountMemoryAccess(address, MemoryAccessKind.Write);
+
+        try
+        {
+            _bus.Write32(address, Gte.ReadDataRegister(instruction.Rt));
+        }
+        catch (InvalidOperationException)
+        {
+            RaiseException(ExceptionCode.DataBusError);
         }
     }
 

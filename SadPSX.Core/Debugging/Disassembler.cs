@@ -48,6 +48,7 @@ public static class Disassembler
             0x0E => ImmOpUnsigned("xori", instruction),
             0x0F => $"lui      ${Reg(instruction.Rt)}, 0x{instruction.Immediate:X4}",
             0x10 => DisassembleCop0(instruction),
+            0x12 => DisassembleCop2(instruction),
             0x20 => LoadStore("lb", instruction),
             0x21 => LoadStore("lh", instruction),
             0x22 => LoadStore("lwl", instruction),
@@ -60,6 +61,8 @@ public static class Disassembler
             0x2A => LoadStore("swl", instruction),
             0x2B => LoadStore("sw", instruction),
             0x2E => LoadStore("swr", instruction),
+            0x32 => LoadStoreCop2("lwc2", instruction),
+            0x3A => LoadStoreCop2("swc2", instruction),
             _ => Unknown(instruction),
         };
     }
@@ -132,6 +135,19 @@ public static class Disassembler
         };
     }
 
+    private static string DisassembleCop2(Instruction instruction)
+    {
+        return instruction.Rs switch
+        {
+            0x00 => $"mfc2     ${Reg(instruction.Rt)}, cop2d{instruction.Rd}",
+            0x02 => $"cfc2     ${Reg(instruction.Rt)}, cop2c{instruction.Rd}",
+            0x04 => $"mtc2     ${Reg(instruction.Rt)}, cop2d{instruction.Rd}",
+            0x06 => $"ctc2     ${Reg(instruction.Rt)}, cop2c{instruction.Rd}",
+            >= 0x10 => $"gte      0x{instruction.Value & 0x01FF_FFFF:X7}",
+            _ => Unknown(instruction),
+        };
+    }
+
     private static string RegOp(string mnemonic, Instruction i) =>
         $"{mnemonic,-8} ${Reg(i.Rd)}, ${Reg(i.Rs)}, ${Reg(i.Rt)}";
 
@@ -152,6 +168,9 @@ public static class Disassembler
 
     private static string LoadStore(string mnemonic, Instruction i) =>
         $"{mnemonic,-8} ${Reg(i.Rt)}, {i.SignedImmediate}(${Reg(i.Rs)})";
+
+    private static string LoadStoreCop2(string mnemonic, Instruction i) =>
+        $"{mnemonic,-8} cop2d{i.Rt}, {i.SignedImmediate}(${Reg(i.Rs)})";
 
     private static string Branch(string mnemonic, Instruction i, uint pc)
     {
