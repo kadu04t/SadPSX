@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SadPSX.Core\SadPSX.Core.csproj" />
+    <ProjectReference Include="..\SadPSX.Frontend\SadPSX.Frontend.csproj" />
   </ItemGroup>
 
 </Project>

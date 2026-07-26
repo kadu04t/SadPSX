@@ -27,7 +27,7 @@ O SadPSX já consegue:
 - Executar DMA2 para a GPU e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
-- Consultar um controle digital pelo SIO0 e usar o teclado como entrada.
+- Consultar um controle digital pelo SIO0 e usar teclado ou gamepad SDL3.
 - Exibir o progresso POST da BIOS no console de diagnóstico.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
@@ -254,11 +254,17 @@ Atalhos de diagnóstico:
 
 A entrada do controle digital usa:
 
+- Gamepads Xbox, PlayStation e genéricos reconhecidos pelo SDL3, inclusive com
+  conexão e remoção durante a execução.
 - Setas: direcional.
 - `Z`/`X`: cruz/círculo.
 - `A`/`S`: quadrado/triângulo.
 - `Q`/`W`: L1/R1; `E`/`D`: L2/R2.
 - `Enter`: Start; `Backspace`: Select.
+
+Nos gamepads, os botões de face, direcionais, Start/Select, L1/R1, L2/R2 e
+L3/R3 seguem o mapeamento padronizado do SDL3. O teclado continua funcionando
+ao mesmo tempo e serve como fallback.
 
 A emulação roda continuamente e a primeira tela da BIOS pode levar algum tempo
 para aparecer enquanto o interpretador executa a inicialização. Atalhos:
@@ -444,7 +450,7 @@ O SadPSX ainda não possui:
 - Relatórios periódicos de `Play`, matriz de volume do CD-ROM e áudio XA-ADPCM.
 - Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
-- Controles analógicos, gamepads do host e memory cards.
+- Protocolo DualShock, controles analógicos e memory cards.
 - Temporização precisa por componente e contenção de barramento.
 - Implementação completa da instruction cache.
 

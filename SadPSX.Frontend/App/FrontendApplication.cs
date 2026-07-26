@@ -3,6 +3,7 @@ using SadPSX.Core;
 using SadPSX.Core.Controllers;
 using SadPSX.Frontend.Audio;
 using SadPSX.Frontend.Diagnostics;
+using SadPSX.Frontend.Input;
 using SadPSX.Frontend.Video;
 using SDL3;
 
@@ -19,6 +20,8 @@ internal sealed class FrontendApplication : IDisposable
     private readonly DiagnosticConsole _diagnosticConsole;
     private readonly SdlVideoOutput _videoOutput;
     private readonly SdlAudioOutput _audioOutput;
+    private readonly ControllerInputState _controllerInput;
+    private readonly SdlGamepadInput _gamepadInput;
     private readonly int _instructionBatchSize;
     private readonly int? _frameLimit;
     private readonly Stopwatch _runtime = Stopwatch.StartNew();
@@ -42,6 +45,9 @@ internal sealed class FrontendApplication : IDisposable
         _paused = options.StartPaused;
         _videoOutput = new SdlVideoOutput("SadPSX", 960, 720);
         _audioOutput = new SdlAudioOutput();
+        _controllerInput = new ControllerInputState(
+            _machine.Bus.Sio0.ControllerPort1);
+        _gamepadInput = new SdlGamepadInput(_controllerInput);
         _audioOutput.SetPaused(_paused);
     }
 
@@ -104,6 +110,7 @@ internal sealed class FrontendApplication : IDisposable
 
     public void Dispose()
     {
+        _gamepadInput.Dispose();
         _videoOutput.Dispose();
         _audioOutput.Dispose();
         _diagnosticConsole.Dispose();
@@ -185,6 +192,31 @@ internal sealed class FrontendApplication : IDisposable
                         currentEvent.Key.Scancode,
                         pressed: false);
                     break;
+
+                case SDL.EventType.GamepadAdded:
+                    _gamepadInput.HandleDeviceAdded(
+                        currentEvent.GDevice.Which);
+                    break;
+
+                case SDL.EventType.GamepadRemoved:
+                    _gamepadInput.HandleDeviceRemoved(
+                        currentEvent.GDevice.Which);
+                    break;
+
+                case SDL.EventType.GamepadButtonDown:
+                case SDL.EventType.GamepadButtonUp:
+                    _gamepadInput.HandleButton(
+                        currentEvent.GButton.Which,
+                        (SDL.GamepadButton)currentEvent.GButton.Button,
+                        currentEvent.GButton.Down);
+                    break;
+
+                case SDL.EventType.GamepadAxisMotion:
+                    _gamepadInput.HandleAxis(
+                        currentEvent.GAxis.Which,
+                        (SDL.GamepadAxis)currentEvent.GAxis.Axis,
+                        currentEvent.GAxis.Value);
+                    break;
             }
         }
     }
@@ -211,11 +243,7 @@ internal sealed class FrontendApplication : IDisposable
         };
 
         if (button is ControllerButton mappedButton)
-        {
-            _machine.Bus.Sio0.ControllerPort1.SetButton(
-                mappedButton,
-                pressed);
-        }
+            _controllerInput.SetKeyboardButton(mappedButton, pressed);
     }
 
     private void HandleKey(SDL.Scancode scancode)
@@ -307,6 +335,7 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine($"Lote de instruções: {_instructionBatchSize}");
         Console.WriteLine();
         Console.WriteLine("Controles:");
+        Console.WriteLine("  Gamepad Xbox/PlayStation/genérico via SDL3");
         Console.WriteLine("  Setas   Direcional");
         Console.WriteLine("  Z/X     Cruz/Círculo");
         Console.WriteLine("  A/S     Quadrado/Triângulo");
