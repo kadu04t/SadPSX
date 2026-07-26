@@ -197,6 +197,18 @@ dotnet run --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
   --disc .\Jogos\Jogo.cue
 ```
 
+O terminal funciona como console de diagnóstico durante a execução. Alertas de
+exceções inesperadas, loops curtos, falta de progresso de vídeo e acessos MMIO
+não tratados são exibidos automaticamente. O relatório completo também fica em
+`SadPSX.Frontend/bin/<configuração>/net10.0/Logs/SadPSX.log`.
+
+Atalhos de diagnóstico:
+
+- `F1`: estado geral da CPU, vídeo, IRQ, CD-ROM, DMA e MMIO.
+- `F2`: instrução atual e registradores da CPU.
+- `F3`: acessos MMIO ainda não implementados.
+- `F4`: exceções recentes da CPU.
+
 A emulação roda continuamente e a primeira tela da BIOS pode levar algum tempo
 para aparecer enquanto o interpretador executa a inicialização. Atalhos:
 

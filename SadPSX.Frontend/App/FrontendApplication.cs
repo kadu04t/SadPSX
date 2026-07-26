@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using SadPSX.Core;
+using SadPSX.Frontend.Diagnostics;
 using SadPSX.Frontend.Video;
 using SDL3;
 
@@ -13,6 +14,7 @@ internal sealed class FrontendApplication : IDisposable
         TimeSpan.FromSeconds(1);
 
     private readonly PsxMachine _machine;
+    private readonly DiagnosticConsole _diagnosticConsole;
     private readonly SdlVideoOutput _videoOutput;
     private readonly int _instructionBatchSize;
     private readonly int? _frameLimit;
@@ -31,6 +33,7 @@ internal sealed class FrontendApplication : IDisposable
         _machine.LoadBios(options.BiosPath);
         if (options.DiscPath is not null)
             _machine.LoadDisc(options.DiscPath);
+        _diagnosticConsole = new DiagnosticConsole(_machine);
         _instructionBatchSize = options.InstructionBatchSize;
         _frameLimit = options.FrameLimit;
         _paused = options.StartPaused;
@@ -94,33 +97,45 @@ internal sealed class FrontendApplication : IDisposable
     public void Dispose()
     {
         _videoOutput.Dispose();
+        _diagnosticConsole.Dispose();
     }
 
     private void MainLoop()
     {
-        PresentFrame();
-
-        while (_running)
+        try
         {
-            ProcessEvents();
+            PresentFrame();
 
-            if (!_paused)
-                _machine.Run((ulong)_instructionBatchSize);
-            else
-                SDL.Delay(1);
-
-            TimeSpan now = _runtime.Elapsed;
-            if (now - _lastFrameTime >= FrameInterval)
+            while (_running)
             {
-                PresentFrame();
-                _lastFrameTime = now;
-            }
+                ProcessEvents();
 
-            if (now - _lastTitleTime >= TitleInterval)
-            {
-                UpdateWindowTitle(now);
-                _lastTitleTime = now;
+                if (!_paused)
+                {
+                    _machine.Run((ulong)_instructionBatchSize);
+                    _diagnosticConsole.ObserveExecution(_machine.Cpu.Pc);
+                }
+                else
+                    SDL.Delay(1);
+
+                TimeSpan now = _runtime.Elapsed;
+                if (now - _lastFrameTime >= FrameInterval)
+                {
+                    PresentFrame();
+                    _lastFrameTime = now;
+                }
+
+                if (now - _lastTitleTime >= TitleInterval)
+                {
+                    UpdateWindowTitle(now);
+                    _lastTitleTime = now;
+                }
             }
+        }
+        catch (Exception exception)
+        {
+            _diagnosticConsole.ReportFatal(exception);
+            throw;
         }
     }
 
@@ -173,8 +188,25 @@ internal sealed class FrontendApplication : IDisposable
 
             case SDL.Scancode.R:
                 _machine.Reset();
+                _diagnosticConsole.Reset();
                 _lastTitleInstructionCount = 0;
                 Console.WriteLine("Console reiniciado.");
+                break;
+
+            case SDL.Scancode.F1:
+                _diagnosticConsole.PrintStatus();
+                break;
+
+            case SDL.Scancode.F2:
+                _diagnosticConsole.PrintCpu();
+                break;
+
+            case SDL.Scancode.F3:
+                _diagnosticConsole.PrintMmio();
+                break;
+
+            case SDL.Scancode.F4:
+                _diagnosticConsole.PrintExceptions();
                 break;
 
             case SDL.Scancode.F11:
@@ -194,6 +226,7 @@ internal sealed class FrontendApplication : IDisposable
         double instructionsPerSecond =
             elapsedInstructions / elapsedSeconds;
         _lastTitleInstructionCount = instructionCount;
+        _diagnosticConsole.Poll(_paused, instructionsPerSecond);
 
         string state = _paused ? "Pausado" : "Executando";
         _videoOutput.SetTitle(
@@ -212,6 +245,10 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("Controles:");
         Console.WriteLine("  Espaço  Pausar/continuar");
         Console.WriteLine("  R       Reiniciar console");
+        Console.WriteLine("  F1      Estado geral");
+        Console.WriteLine("  F2      CPU e registradores");
+        Console.WriteLine("  F3      MMIO não tratado");
+        Console.WriteLine("  F4      Exceções recentes");
         Console.WriteLine("  F11     Alternar tela cheia");
         Console.WriteLine("  Esc     Sair");
         Console.WriteLine();
