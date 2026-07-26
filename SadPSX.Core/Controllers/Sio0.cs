@@ -19,6 +19,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private const ushort RxInterruptEnable = 1 << 11;
     private const ushort DsrInterruptEnable = 1 << 12;
     private const ushort PortSelect = 1 << 13;
+    private const uint AcknowledgeDelayCycles = 100;
     private const uint AcknowledgePulseCycles = 100;
 
     private readonly InterruptController _interruptController;
@@ -31,6 +32,9 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private bool _transferPending;
     private uint _transferCyclesRemaining;
     private ControllerTransferResult _pendingResult;
+    private bool _transmitQueued;
+    private byte _queuedTransmitByte;
+    private uint _acknowledgeDelayRemaining;
     private uint _acknowledgeCyclesRemaining;
 
     public Sio0(InterruptController interruptController)
@@ -60,6 +64,9 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         _transferPending = false;
         _transferCyclesRemaining = 0;
         _pendingResult = default;
+        _transmitQueued = false;
+        _queuedTransmitByte = 0;
+        _acknowledgeDelayRemaining = 0;
         _acknowledgeCyclesRemaining = 0;
         ControllerPort1.ResetTransfer();
         ControllerPort1.ReleaseAll();
@@ -67,26 +74,51 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     public void Tick(uint cycles)
     {
-        if (_transferPending)
+        uint cyclesRemaining = cycles;
+        while (cyclesRemaining > 0)
         {
-            if (cycles < _transferCyclesRemaining)
+            if (_transferPending)
             {
-                _transferCyclesRemaining -= cycles;
-                return;
+                uint elapsed = Math.Min(
+                    cyclesRemaining,
+                    _transferCyclesRemaining);
+                cyclesRemaining -= elapsed;
+                _transferCyclesRemaining -= elapsed;
+                if (_transferCyclesRemaining == 0)
+                {
+                    _transferPending = false;
+                    CompleteTransfer();
+                }
+                continue;
             }
 
-            _transferPending = false;
-            _transferCyclesRemaining = 0;
-            CompleteTransfer();
-            return;
+            if (_acknowledgeDelayRemaining > 0)
+            {
+                uint elapsed = Math.Min(
+                    cyclesRemaining,
+                    _acknowledgeDelayRemaining);
+                cyclesRemaining -= elapsed;
+                _acknowledgeDelayRemaining -= elapsed;
+                if (_acknowledgeDelayRemaining == 0)
+                    BeginAcknowledgePulse();
+                continue;
+            }
+
+            if (_acknowledgeCyclesRemaining > 0)
+            {
+                uint elapsed = Math.Min(
+                    cyclesRemaining,
+                    _acknowledgeCyclesRemaining);
+                cyclesRemaining -= elapsed;
+                _acknowledgeCyclesRemaining -= elapsed;
+                if (_acknowledgeCyclesRemaining == 0)
+                    TryStartQueuedTransfer();
+                continue;
+            }
+
+            if (!TryStartQueuedTransfer())
+                break;
         }
-
-        if (_acknowledgeCyclesRemaining == 0)
-            return;
-
-        _acknowledgeCyclesRemaining = cycles >= _acknowledgeCyclesRemaining
-            ? 0
-            : _acknowledgeCyclesRemaining - cycles;
     }
 
     public bool Handles(uint address) =>
@@ -246,10 +278,12 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     private uint ReadStatus()
     {
-        uint status = 1u << 0;
+        uint status = 0;
+        if (!_transmitQueued)
+            status |= 1u << 0;
         if (_receiveFifo.Count > 0)
             status |= 1u << 1;
-        if (!_transferPending)
+        if (!_transferPending && !_transmitQueued)
             status |= 1u << 2;
         if (DsrAsserted)
             status |= 1u << 7;
@@ -282,24 +316,54 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         {
             ControllerPort1.ResetTransfer();
             _transferPending = false;
+            _transferCyclesRemaining = 0;
+            _transmitQueued = false;
+            _acknowledgeDelayRemaining = 0;
             _acknowledgeCyclesRemaining = 0;
         }
+        else
+            TryStartQueuedTransfer();
     }
 
     private void StartTransfer(byte value)
     {
         if (_transferPending ||
+            _acknowledgeDelayRemaining > 0 ||
+            _acknowledgeCyclesRemaining > 0 ||
             (_control & (TxEnable | Dtr)) != (TxEnable | Dtr))
         {
+            _queuedTransmitByte = value;
+            _transmitQueued = true;
             return;
         }
 
+        BeginTransfer(value);
+    }
+
+    private void BeginTransfer(byte value)
+    {
         _pendingResult = (_control & PortSelect) == 0
             ? ControllerPort1.Transfer(value)
             : new ControllerTransferResult(0xFF, false);
         _transferPending = true;
         _transferCyclesRemaining = CalculateTransferCycles();
-        _acknowledgeCyclesRemaining = 0;
+    }
+
+    private bool TryStartQueuedTransfer()
+    {
+        if (!_transmitQueued ||
+            _transferPending ||
+            _acknowledgeDelayRemaining > 0 ||
+            _acknowledgeCyclesRemaining > 0 ||
+            (_control & (TxEnable | Dtr)) != (TxEnable | Dtr))
+        {
+            return false;
+        }
+
+        byte value = _queuedTransmitByte;
+        _transmitQueued = false;
+        BeginTransfer(value);
+        return true;
     }
 
     private uint CalculateTransferCycles()
@@ -320,18 +384,28 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
             _receiveFifo.Enqueue(_pendingResult.Data);
 
         if (_pendingResult.Acknowledge)
-            _acknowledgeCyclesRemaining = AcknowledgePulseCycles;
+            _acknowledgeDelayRemaining = AcknowledgeDelayCycles;
+        else
+            TryStartQueuedTransfer();
 
         bool rxInterrupt = (_control & RxInterruptEnable) != 0 &&
                            _receiveFifo.Count >= ReceiveInterruptThreshold();
         bool txInterrupt = (_control & TxInterruptEnable) != 0;
-        bool dsrInterrupt = (_control & DsrInterruptEnable) != 0 &&
-                            _pendingResult.Acknowledge;
-        if (rxInterrupt || txInterrupt || dsrInterrupt)
+        if (rxInterrupt || txInterrupt)
         {
             _interruptRequest = true;
             _interruptController.Request(InterruptSource.Controller);
         }
+    }
+
+    private void BeginAcknowledgePulse()
+    {
+        _acknowledgeCyclesRemaining = AcknowledgePulseCycles;
+        if ((_control & DsrInterruptEnable) == 0)
+            return;
+
+        _interruptRequest = true;
+        _interruptController.Request(InterruptSource.Controller);
     }
 
     private int ReceiveInterruptThreshold() =>

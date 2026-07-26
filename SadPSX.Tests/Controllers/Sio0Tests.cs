@@ -48,15 +48,42 @@ public sealed class Sio0Tests
         var bus = CreateConfiguredBus(control: 0x1003);
 
         bus.Write8(Sio0.DataAddress, 0x01);
-        bus.Sio0.Tick(2000);
+        bus.Sio0.Tick(1088);
+
+        Assert.False(bus.Sio0.DsrAsserted);
+        Assert.False(bus.Sio0.InterruptRequest);
+
+        bus.Sio0.Tick(100);
 
         Assert.True(bus.Sio0.InterruptRequest);
+        Assert.True(bus.Sio0.DsrAsserted);
         Assert.NotEqual(0, bus.InterruptController.Status &
                            (1 << (int)InterruptSource.Controller));
         Assert.NotEqual(0u, bus.Read32(Sio0.StatusAddress) & (1u << 9));
 
         bus.Write16(Sio0.ControlAddress, 0x1013);
         Assert.False(bus.Sio0.InterruptRequest);
+    }
+
+    [Fact]
+    public void TransmitRegisterQueuesTheNextByte()
+    {
+        var bus = CreateConfiguredBus();
+
+        bus.Write8(Sio0.DataAddress, 0x01);
+        bus.Sio0.Tick(1);
+
+        Assert.NotEqual(0u, bus.Read32(Sio0.StatusAddress) & 1);
+
+        bus.Write8(Sio0.DataAddress, 0x42);
+
+        Assert.Equal(0u, bus.Read32(Sio0.StatusAddress) & 1);
+
+        bus.Sio0.Tick(3000);
+
+        Assert.Equal(2, bus.Sio0.ReceiveCount);
+        Assert.Equal(0xFF, bus.Read8(Sio0.DataAddress));
+        Assert.Equal(0x41, bus.Read8(Sio0.DataAddress));
     }
 
     [Fact]
