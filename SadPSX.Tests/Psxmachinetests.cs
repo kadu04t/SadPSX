@@ -179,6 +179,7 @@ public sealed class PsxMachineTests
         machine.Run(2);
 
         Assert.Equal(58ul, machine.ClockCycles);
+        Assert.Equal(machine.Cpu.ClockCycles, machine.Timing.ClockCycles);
         Assert.Equal(58ul, device.TotalCycles);
         Assert.Equal(2, device.TickCount);
     }
@@ -195,6 +196,22 @@ public sealed class PsxMachineTests
         machine.Step();
 
         Assert.Equal(1, device.TickCount);
+    }
+
+    [Fact]
+    public void ResetClearsCpuAndCentralTimingClocks()
+    {
+        var machine = new PsxMachine();
+        machine.LoadBios(CreateBiosImageWithInstructions(0x0000_0000));
+        machine.Step();
+
+        Assert.NotEqual(0ul, machine.Cpu.ClockCycles);
+        Assert.NotEqual(0ul, machine.Timing.ClockCycles);
+
+        machine.Reset();
+
+        Assert.Equal(0ul, machine.Cpu.ClockCycles);
+        Assert.Equal(0ul, machine.Timing.ClockCycles);
     }
 
     private sealed class RecordingClockedDevice : IClockedDevice

@@ -1,5 +1,6 @@
 using SadPSX.Core.Cpu;
 using SadPSX.Core.CdRom.Media;
+using SadPSX.Core.Timing;
 using SystemBus = SadPSX.Core.Bus.Bus;
 
 namespace SadPSX.Core;
@@ -17,34 +18,25 @@ namespace SadPSX.Core;
 /// </summary>
 public sealed class PsxMachine
 {
-    private readonly List<IClockedDevice> _clockedDevices = new();
-
     public SystemBus Bus { get; }
     public R3000A Cpu { get; }
-    public ulong ClockCycles => Cpu.ClockCycles;
+    public TimingScheduler Timing { get; }
+    public ulong ClockCycles => Timing.ClockCycles;
 
     public PsxMachine()
     {
         Bus = new SystemBus();
         Cpu = new R3000A(Bus);
-        RegisterClockedDevice(Bus.VideoTiming);
-        RegisterClockedDevice(Bus.RootCounters);
-        RegisterClockedDevice(Bus.CdRom);
-        RegisterClockedDevice(Bus.Spu);
-        RegisterClockedDevice(Bus.Sio0);
-        RegisterClockedDevice(Bus.Dma);
+        Timing = new TimingScheduler();
+        RegisterDefaultClockedDevices();
     }
 
     public PsxMachine(SystemBus bus)
     {
         Bus = bus ?? throw new ArgumentNullException(nameof(bus));
         Cpu = new R3000A(Bus);
-        RegisterClockedDevice(Bus.VideoTiming);
-        RegisterClockedDevice(Bus.RootCounters);
-        RegisterClockedDevice(Bus.CdRom);
-        RegisterClockedDevice(Bus.Spu);
-        RegisterClockedDevice(Bus.Sio0);
-        RegisterClockedDevice(Bus.Dma);
+        Timing = new TimingScheduler();
+        RegisterDefaultClockedDevices();
     }
 
     /// <summary>
@@ -75,9 +67,7 @@ public sealed class PsxMachine
     public void Step()
     {
         Cpu.Step();
-
-        foreach (IClockedDevice device in _clockedDevices)
-            device.Tick(Cpu.LastStepCycles);
+        Timing.Advance(Cpu.LastStepCycles);
     }
 
     public void LoadDisc(string discFilePath)
@@ -92,10 +82,7 @@ public sealed class PsxMachine
 
     public void RegisterClockedDevice(IClockedDevice device)
     {
-        ArgumentNullException.ThrowIfNull(device);
-
-        if (!_clockedDevices.Contains(device))
-            _clockedDevices.Add(device);
+        Timing.Register(device);
     }
 
     /// <summary>
@@ -151,5 +138,16 @@ public sealed class PsxMachine
         Bus.Gpu.Reset();
         Bus.VideoTiming.Reset();
         Cpu.Reset();
+        Timing.ResetClock();
+    }
+
+    private void RegisterDefaultClockedDevices()
+    {
+        Timing.Register(Bus.VideoTiming);
+        Timing.Register(Bus.RootCounters);
+        Timing.Register(Bus.CdRom);
+        Timing.Register(Bus.Spu);
+        Timing.Register(Bus.Sio0);
+        Timing.Register(Bus.Dma);
     }
 }
