@@ -50,6 +50,8 @@ try {
 
     Copy-Item -LiteralPath "docs/distribution/README.txt" `
         -Destination $publishDirectory
+    Copy-Item -LiteralPath "docs/distribution/RELEASE_NOTES.md" `
+        -Destination $publishDirectory
     Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory
     Copy-Item -LiteralPath "CHANGELOG.md" -Destination $publishDirectory
     Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $publishDirectory
