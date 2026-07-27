@@ -30,4 +30,4 @@ This notice does not modify the license of SadPSX itself.
 
 Game names, trademarks, and screenshots shown in the documentation remain the
 property of their respective copyright holders. They are used only to document
-emulator compatibility and are not covered by the SadPSX MIT license.
+emulator compatibility and are not covered by the SadPSX GPL license.

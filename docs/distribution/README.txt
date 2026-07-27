@@ -39,3 +39,9 @@ missing features, hangs, and crashes are expected.
 
 SadPSX is not affiliated with Sony Interactive Entertainment. Use only BIOS
 and disc images obtained legally from hardware and media you own.
+
+LICENSE AND SOURCE
+------------------
+
+SadPSX is licensed under the GNU General Public License v3.0 only.
+Source code: https://github.com/kadu04t/SadPSX

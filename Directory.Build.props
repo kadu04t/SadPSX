@@ -7,6 +7,6 @@
     <Copyright>Copyright (c) 2026 kadu04t</Copyright>
     <RepositoryUrl>https://github.com/kadu04t/SadPSX</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
 </Project>

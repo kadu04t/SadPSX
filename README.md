@@ -473,6 +473,13 @@ The planned accuracy blocks are:
 6. Central event scheduling, bus contention, and timing accuracy.
 7. Compatibility tests, regression diagnostics, and performance optimization.
 
+## Project Philosophy
+
+SadPSX is being designed from the beginning around a hardware-fidelity
+philosophy, while ProjectPSX was designed primarily to remain simple and
+educational. SadPSX still aims to be readable and useful for learning, but
+accuracy and reproducible hardware behavior take priority over shortcuts.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes.
 Release history is documented in [CHANGELOG.md](CHANGELOG.md).
 
@@ -489,5 +496,12 @@ Interactive Entertainment.
 
 ## License
 
-SadPSX is licensed under the [MIT License](LICENSE). Distributed dependency
-notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+SadPSX is licensed under the [GNU General Public License v3](LICENSE)
+(`GPL-3.0-only`).
+
+The goal of this project is to remain open, educational, and collaborative.
+If you distribute modified versions of SadPSX, those modifications must also
+remain open under the GPL.
+
+Distributed dependency notices are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

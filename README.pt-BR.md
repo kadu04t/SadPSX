@@ -508,9 +508,23 @@ otimização mantém benchmarks,
 execução da CPU em lotes, caminhos rápidos do barramento, scheduler de eventos
 e separação entre diagnóstico normal e trace completo.
 
+## Filosofia do projeto
+
+O SadPSX está sendo projetado desde o início com uma filosofia de alta
+fidelidade ao hardware, enquanto o ProjectPSX foi projetado principalmente para
+ser simples e educativo. O SadPSX ainda busca ser legível e útil para estudo,
+mas precisão e comportamento reproduzível do hardware têm prioridade sobre
+atalhos.
+
 ## Licença
 
-Este projeto está disponível sob os termos descritos em [LICENSE](LICENSE).
+O SadPSX é licenciado sob a
+[GNU General Public License v3](LICENSE) (`GPL-3.0-only`).
+
+O objetivo deste projeto é permanecer aberto, educativo e colaborativo. Se você
+distribuir versões modificadas do SadPSX, essas modificações também deverão
+permanecer abertas sob a GPL.
+
 As licenças das dependências distribuídas estão em
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 O histórico de versões está em [CHANGELOG.md](CHANGELOG.md).

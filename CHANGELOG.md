@@ -18,6 +18,11 @@ The project follows [Semantic Versioning](https://semver.org/).
 - SadPSX application icon, project logo, and compatibility documentation.
 - Basic SDL3 launcher with native BIOS and disc file selection.
 
+### Changed
+
+- Project licensing changed to GNU GPL v3 (`GPL-3.0-only`) to keep distributed
+  modifications open.
+
 ### Known Issues
 
 - GPU rendering contains visible accuracy problems.
