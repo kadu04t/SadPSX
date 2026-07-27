@@ -176,10 +176,11 @@ root counters com dotclock e HBlank.
 
 A SPU preserva os registradores MMIO, aplica o modo de `SPUCNT` em `SPUSTAT`,
 fornece 512 KiB de RAM de som e transfere dados manualmente ou por DMA4. As 24
-vozes decodificam blocos ADPCM, aplicam pitch, loop, key on/off, ADSR e volumes
-estéreo. A mistura também recebe o PCM das faixas CD-DA, respeitando volumes e
-o enable de áudio do CD. O frontend envia a saída de 44,1 kHz para um stream
-SDL3.
+vozes decodificam blocos ADPCM e aplicam interpolação fracionária, pitch
+modulation, noise, loop, key on/off, ADSR e volumes estéreo. A mistura também
+recebe o PCM das faixas CD-DA, preenche os capture buffers de CD e das vozes
+1/3 e pode gerar IRQ9 por acessos de voz, captura ou transferência à Sound
+RAM. O frontend envia a saída de 44,1 kHz para um stream SDL3.
 
 ### MDEC
 
@@ -222,12 +223,14 @@ preservando o código carregado pela BIOS durante sua rotina de inicialização.
 loads e stores, diferenciando RAM em cache, RAM sem cache, scratchpad, MMIO,
 Expansion 1 e BIOS.
 
-Dispositivos implementam `IClockedDevice` e são registrados na `PsxMachine`;
-eles recebem os ciclos decorridos após cada instrução. O timing de vídeo usa
-acumuladores inteiros para converter clocks da CPU em clocks NTSC/PAL sem
-depender de ponto flutuante. Este modelo ainda não representa contenção de
-barramento, instruction cache completa ou timings internos de todas as
-instruções e transferências.
+Dispositivos implementam `IClockedDevice` e são registrados no
+`TimingScheduler` central. Após cada instrução, a `PsxMachine` avança um
+relógio absoluto do sistema e repassa os ciclos decorridos aos dispositivos em
+ordem determinística de registro. O timing de vídeo usa acumuladores inteiros
+para converter clocks da CPU em clocks NTSC/PAL sem depender de ponto
+flutuante. Este modelo ainda não representa contenção de barramento,
+instruction cache completa ou timings internos de todas as instruções e
+transferências.
 
 ## Requisitos
 
@@ -489,7 +492,8 @@ O SadPSX ainda não possui:
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.
 - Relatórios periódicos de `Play`, matriz de volume do CD-ROM e áudio XA-ADPCM.
-- Reverb, noise, pitch modulation e precisão completa dos envelopes da SPU.
+- Interpolação Gaussiana, reverb, volume sweep e precisão completa dos
+  envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Protocolo DualShock, controles analógicos e memory cards.
 - Temporização precisa por componente e contenção de barramento.

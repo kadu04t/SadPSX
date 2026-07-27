@@ -173,10 +173,11 @@ root counters.
 The SPU preserves its MMIO registers, reflects `SPUCNT` mode in `SPUSTAT`,
 provides 512 KiB of sound RAM, and accepts manual or DMA4 transfers.
 
-Its 24 voices decode ADPCM blocks and implement pitch, loop, key on/off, ADSR,
-and stereo volume. The mixer also receives CD-DA PCM and respects CD volume and
-audio-enable controls. The frontend sends 44.1 kHz output to an SDL3 audio
-stream.
+Its 24 voices decode ADPCM blocks and implement fractional interpolation,
+pitch modulation, noise generation, loop, key on/off, ADSR, and stereo volume.
+The mixer receives CD-DA PCM, writes the hardware capture buffers for CD audio
+and voices 1/3, and can raise IRQ9 from voice, capture, or transfer Sound RAM
+accesses. The frontend sends 44.1 kHz output to an SDL3 audio stream.
 
 ### MDEC
 
@@ -218,10 +219,11 @@ preserving code loaded by the BIOS during initialization.
 for instruction fetches, loads, and stores while distinguishing cached and
 uncached RAM, scratchpad, MMIO, Expansion 1, and BIOS accesses.
 
-Devices implement `IClockedDevice` and are registered by `PsxMachine`, which
-delivers elapsed cycles after every instruction. Video timing uses integer
-accumulators to convert CPU clocks into NTSC or PAL clocks without
-floating-point drift.
+Devices implement `IClockedDevice` and are registered with the central
+`TimingScheduler`. After every instruction, `PsxMachine` advances one absolute
+system clock and dispatches the elapsed cycles to devices in deterministic
+registration order. Video timing uses integer accumulators to convert CPU
+clocks into NTSC or PAL clocks without floating-point drift.
 
 The model does not yet cover complete bus contention, instruction cache
 behavior, or accurate internal timing for every instruction and transfer.
@@ -451,8 +453,8 @@ SadPSX/
 - GTE lighting/color commands and saturation behavior are not complete.
 - Memory cards, DualShock, and analog controller protocols are missing.
 - CD-ROM periodic `Play` reports, volume matrix, and XA-ADPCM are missing.
-- SPU reverb, noise, pitch modulation, and envelope accuracy need further
-  work.
+- SPU Gaussian interpolation, reverb, volume sweeps, and complete envelope
+  accuracy need further work.
 - MDEC IDCT and FIFO timing need additional precision.
 - Central timing, bus contention, and instruction cache behavior are
   approximate.

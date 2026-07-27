@@ -4,6 +4,18 @@ All notable changes to SadPSX releases are documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Central timing scheduler with deterministic device advancement.
+- SPU noise generation, pitch modulation, capture buffers, and IRQ9.
+
+### Changed
+
+- SPU voices now use fractional sample interpolation and more accurate
+  exponential ADSR attack timing.
+
 ## [0.0.1-beta.1] - 2026-07-27
 
 ### Added

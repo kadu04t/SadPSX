@@ -39,7 +39,7 @@ public sealed class Mmio
         RootCounters = new RootCounters(InterruptController);
         Sio0 = new Sio0(InterruptController);
         PostStatus = new PostStatusRegister();
-        Spu = new SpuDevice();
+        Spu = new SpuDevice(InterruptController);
         CdRom = new CdRomController(InterruptController);
         CdRom.CdAudioSectorReady += sector =>
             Spu.QueueCdAudioSector(sector.Span);

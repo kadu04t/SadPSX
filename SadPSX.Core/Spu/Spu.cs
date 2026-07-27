@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using SadPSX.Core.Bus;
+using SadPSX.Core.Interrupts;
 
 namespace SadPSX.Core.Spu;
 
@@ -20,8 +21,13 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public const uint KeyOnHighRegister = 0x1F80_1D8A;
     public const uint KeyOffLowRegister = 0x1F80_1D8C;
     public const uint KeyOffHighRegister = 0x1F80_1D8E;
+    public const uint PitchModulationLowRegister = 0x1F80_1D90;
+    public const uint PitchModulationHighRegister = 0x1F80_1D92;
+    public const uint NoiseModeLowRegister = 0x1F80_1D94;
+    public const uint NoiseModeHighRegister = 0x1F80_1D96;
     public const uint EndFlagsLowRegister = 0x1F80_1D9C;
     public const uint EndFlagsHighRegister = 0x1F80_1D9E;
+    public const uint InterruptAddressRegister = 0x1F80_1DA4;
     public const uint CpuCyclesPerSample = 768;
     public const int SampleRate = 44_100;
 
@@ -30,6 +36,11 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private const int SoundRamSize = 512 * 1024;
     private const uint ControlApplyDelayCycles = 2;
     private const int MaximumQueuedSampleFrames = 8_192;
+    private const int CaptureBufferSize = 0x400;
+    private const int CdLeftCaptureBase = 0x000;
+    private const int CdRightCaptureBase = 0x400;
+    private const int Voice1CaptureBase = 0x800;
+    private const int Voice3CaptureBase = 0xC00;
 
     private static readonly int[] PositiveFilter = [0, 60, 115, 98, 122];
     private static readonly int[] NegativeFilter = [0, 0, -52, -55, -60];
@@ -41,12 +52,22 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private readonly Queue<StereoSample> _cdAudioQueue = new();
     private readonly SpuVoice[] _voices =
         Enumerable.Range(0, VoiceCount).Select(_ => new SpuVoice()).ToArray();
+    private readonly InterruptController? _interruptController;
 
     private uint _currentTransferAddress;
     private uint _controlApplyCycles;
     private ushort _pendingStatusMode;
     private ulong _sampleCycleAccumulator;
     private uint _endFlags;
+    private ushort _noiseLevel;
+    private int _noiseTimer;
+    private int _captureBufferPosition;
+
+    public Spu(InterruptController? interruptController = null)
+    {
+        _interruptController = interruptController;
+        Reset();
+    }
 
     public ushort Control => ReadRawRegister(ControlRegister);
 
@@ -71,6 +92,9 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         _pendingStatusMode = 0;
         _sampleCycleAccumulator = 0;
         _endFlags = 0;
+        _noiseLevel = 1;
+        _noiseTimer = 0;
+        _captureBufferPosition = 0;
         GeneratedSampleFrames = 0;
     }
 
@@ -161,6 +185,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
 
             case ControlRegister:
                 WriteRawRegister(address, value);
+                if ((value & (1 << 6)) == 0)
+                    ClearIrqFlag();
                 _pendingStatusMode = (ushort)(value & 0x003F);
                 _controlApplyCycles = ControlApplyDelayCycles;
                 break;
@@ -207,6 +233,11 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         uint registerAddress = address & ~1u;
         return registerAddress switch
         {
+            PitchModulationLowRegister => "SPU_PMON_LOW",
+            PitchModulationHighRegister => "SPU_PMON_HIGH",
+            NoiseModeLowRegister => "SPU_NON_LOW",
+            NoiseModeHighRegister => "SPU_NON_HIGH",
+            InterruptAddressRegister => "SPU_IRQ_ADDR",
             TransferAddressRegister => "SPU_TRANSFER_ADDR",
             TransferFifoRegister => "SPU_TRANSFER_FIFO",
             ControlRegister => "SPUCNT",
@@ -367,18 +398,37 @@ public sealed class Spu : IClockedDevice, IMmioDevice
 
     private void GenerateSample()
     {
+        AdvanceNoise();
+
         long left = 0;
         long right = 0;
+        int previousVoiceOutput = 0;
+        int voice1Output = 0;
+        int voice3Output = 0;
 
         for (int voiceIndex = 0; voiceIndex < VoiceCount; voiceIndex++)
         {
-            int sample = GenerateVoiceSample(voiceIndex);
+            int sample = GenerateVoiceSample(
+                voiceIndex,
+                previousVoiceOutput);
+            previousVoiceOutput = sample;
+            if (voiceIndex == 1)
+                voice1Output = sample;
+            else if (voiceIndex == 3)
+                voice3Output = sample;
+
             uint voiceAddress = BaseAddress + (uint)voiceIndex * 0x10;
             int volumeLeft = DecodeVolume(ReadRawRegister(voiceAddress));
             int volumeRight = DecodeVolume(ReadRawRegister(voiceAddress + 2));
             left += (long)sample * volumeLeft / 0x8000;
             right += (long)sample * volumeRight / 0x8000;
         }
+
+        StereoSample cdAudio = _cdAudioQueue.TryDequeue(
+            out StereoSample queuedCdAudio)
+            ? queuedCdAudio
+            : default;
+        CaptureSamples(cdAudio, voice1Output, voice3Output);
 
         bool outputEnabled = (Control & 0xC000) == 0xC000;
         if (!outputEnabled)
@@ -387,10 +437,6 @@ public sealed class Spu : IClockedDevice, IMmioDevice
             right = 0;
         }
 
-        StereoSample cdAudio = _cdAudioQueue.TryDequeue(
-            out StereoSample queuedCdAudio)
-            ? queuedCdAudio
-            : default;
         if ((Control & 1) != 0)
         {
             left += (long)cdAudio.Left *
@@ -412,19 +458,15 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         GeneratedSampleFrames++;
     }
 
-    private int GenerateVoiceSample(int voiceIndex)
+    private int GenerateVoiceSample(
+        int voiceIndex,
+        int previousVoiceOutput)
     {
         SpuVoice voice = _voices[voiceIndex];
         if (!voice.Active)
             return 0;
 
         uint voiceAddress = BaseAddress + (uint)voiceIndex * 0x10;
-        ushort pitch = (ushort)Math.Min(
-            (int)ReadRawRegister(voiceAddress + 4),
-            0x4000);
-        if (pitch == 0)
-            return 0;
-
         if (voice.DecodedIndex >= voice.DecodedSamples.Length)
         {
             if (voice.StopAfterBlock)
@@ -440,9 +482,15 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         }
 
         AdvanceEnvelope(voiceIndex);
-        int sample = voice.DecodedSamples[voice.DecodedIndex];
+        int sample = IsVoiceFlagSet(
+            NoiseModeLowRegister,
+            NoiseModeHighRegister,
+            voiceIndex)
+            ? (short)_noiseLevel
+            : InterpolateVoiceSample(voice);
         sample = sample * voice.EnvelopeLevel / 0x8000;
 
+        uint pitch = CalculatePitch(voiceIndex, previousVoiceOutput);
         voice.PitchCounter += pitch;
         while (voice.PitchCounter >= 0x1000)
         {
@@ -453,10 +501,127 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         return sample;
     }
 
+    private uint CalculatePitch(int voiceIndex, int previousVoiceOutput)
+    {
+        uint voiceAddress = BaseAddress + (uint)voiceIndex * 0x10;
+        ushort rawPitch = ReadRawRegister(voiceAddress + 4);
+        uint pitch = rawPitch;
+
+        if (voiceIndex > 0 &&
+            IsVoiceFlagSet(
+                PitchModulationLowRegister,
+                PitchModulationHighRegister,
+                voiceIndex))
+        {
+            int factor = Math.Clamp(
+                previousVoiceOutput,
+                short.MinValue,
+                short.MaxValue) + 0x8000;
+            int modulatedPitch = ((short)rawPitch * factor) >> 15;
+            pitch = (uint)modulatedPitch & 0xFFFF;
+        }
+
+        return Math.Min(pitch, 0x4000u);
+    }
+
+    private static int InterpolateVoiceSample(SpuVoice voice)
+    {
+        int current = voice.DecodedSamples[voice.DecodedIndex];
+        int nextIndex = voice.DecodedIndex + 1;
+        int next = nextIndex < voice.DecodedSamples.Length
+            ? voice.DecodedSamples[nextIndex]
+            : current;
+        int fraction = (int)(voice.PitchCounter & 0x0FFF);
+        return current + ((next - current) * fraction >> 12);
+    }
+
+    private bool IsVoiceFlagSet(
+        uint lowRegister,
+        uint highRegister,
+        int voiceIndex)
+    {
+        if (voiceIndex < 16)
+            return (ReadRawRegister(lowRegister) & (1 << voiceIndex)) != 0;
+
+        return (ReadRawRegister(highRegister) &
+                (1 << (voiceIndex - 16))) != 0;
+    }
+
+    private void AdvanceNoise()
+    {
+        int noiseShift = (Control >> 10) & 0x0F;
+        int noiseStep = 4 + ((Control >> 8) & 3);
+        _noiseTimer -= noiseStep;
+
+        int parity =
+            ((_noiseLevel >> 15) ^
+             (_noiseLevel >> 12) ^
+             (_noiseLevel >> 11) ^
+             (_noiseLevel >> 10) ^
+             1) & 1;
+
+        if (_noiseTimer >= 0)
+            return;
+
+        _noiseLevel = (ushort)((_noiseLevel << 1) | parity);
+        int reload = 0x20_000 >> noiseShift;
+        _noiseTimer += reload;
+        if (_noiseTimer < 0)
+            _noiseTimer += reload;
+    }
+
+    private void CaptureSamples(
+        StereoSample cdAudio,
+        int voice1Output,
+        int voice3Output)
+    {
+        WriteCaptureSample(CdLeftCaptureBase, cdAudio.Left);
+        WriteCaptureSample(CdRightCaptureBase, cdAudio.Right);
+        WriteCaptureSample(
+            Voice1CaptureBase,
+            (short)Math.Clamp(
+                voice1Output,
+                short.MinValue,
+                short.MaxValue));
+        WriteCaptureSample(
+            Voice3CaptureBase,
+            (short)Math.Clamp(
+                voice3Output,
+                short.MinValue,
+                short.MaxValue));
+
+        _captureBufferPosition =
+            (_captureBufferPosition + 2) % CaptureBufferSize;
+        UpdateCaptureStatus();
+    }
+
+    private void WriteCaptureSample(int bufferBase, short sample)
+    {
+        int address = bufferBase + _captureBufferPosition;
+        _soundRam[address] = (byte)sample;
+        _soundRam[address + 1] = (byte)(sample >> 8);
+
+        if ((ReadRawRegister(TransferControlRegister) & 0x000C) != 0)
+            CheckIrqAccess((uint)address, 2);
+    }
+
+    private void UpdateCaptureStatus()
+    {
+        ushort status = ReadRawRegister(StatusRegister);
+        bool reportCaptureHalf =
+            (ReadRawRegister(TransferControlRegister) & 0x000C) != 0;
+        if (reportCaptureHalf && _captureBufferPosition >= CaptureBufferSize / 2)
+            status |= 1 << 11;
+        else
+            status &= unchecked((ushort)~(1 << 11));
+        WriteRawRegister(StatusRegister, status);
+    }
+
     private void DecodeAdpcmBlock(int voiceIndex)
     {
         SpuVoice voice = _voices[voiceIndex];
         int address = (int)(voice.CurrentAddress % SoundRamSize);
+        CheckIrqAccess((uint)address, 16);
         byte header = _soundRam[address];
         byte flags = _soundRam[(address + 1) % SoundRamSize];
         int shift = Math.Min(header & 0x0F, 12);
@@ -580,7 +745,10 @@ public sealed class Spu : IClockedDevice, IMmioDevice
             else if (shift >= 11)
                 counterIncrement >>= 2;
             else
+            {
                 step >>= 1;
+                counterIncrement >>= 1;
+            }
         }
         else if (exponential && decreasing)
         {
@@ -603,6 +771,7 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         int address = (int)_currentTransferAddress;
         _soundRam[address] = (byte)value;
         _soundRam[(address + 1) % SoundRamSize] = (byte)(value >> 8);
+        CheckIrqAccess((uint)address, 2);
         _currentTransferAddress = (_currentTransferAddress + 2) % SoundRamSize;
     }
 
@@ -612,8 +781,42 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         ushort value = (ushort)(
             _soundRam[address] |
             (_soundRam[(address + 1) % SoundRamSize] << 8));
+        CheckIrqAccess((uint)address, 2);
         _currentTransferAddress = (_currentTransferAddress + 2) % SoundRamSize;
         return value;
+    }
+
+    private void CheckIrqAccess(uint address, int byteCount)
+    {
+        if ((Control & 0x8040) != 0x8040)
+            return;
+
+        uint irqAddress =
+            (uint)ReadRawRegister(InterruptAddressRegister) * 8 %
+            SoundRamSize;
+        for (int offset = 0; offset < byteCount; offset++)
+        {
+            if ((address + (uint)offset) % SoundRamSize != irqAddress)
+                continue;
+
+            ushort status = ReadRawRegister(StatusRegister);
+            if ((status & (1 << 6)) != 0)
+                return;
+
+            WriteRawRegister(
+                StatusRegister,
+                (ushort)(status | (1 << 6)));
+            _interruptController?.Request(InterruptSource.Spu);
+            return;
+        }
+    }
+
+    private void ClearIrqFlag()
+    {
+        ushort status = ReadRawRegister(StatusRegister);
+        WriteRawRegister(
+            StatusRegister,
+            (ushort)(status & ~(1 << 6)));
     }
 
     private static int DecodeVolume(ushort value)
