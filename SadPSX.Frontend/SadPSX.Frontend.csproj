@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>SadPSX.Frontend</RootNamespace>
     <AssemblyName>SadPSX</AssemblyName>
+    <ApplicationIcon>..\docs\assets\sadpsx.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
