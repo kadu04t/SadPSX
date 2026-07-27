@@ -358,7 +358,7 @@ internal sealed class FrontendApplication : IDisposable
     {
         Console.Error.WriteLine();
         Console.Error.WriteLine(
-            "Uso: dotnet run --project SadPSX.Frontend -- " +
+            "Uso: SadPSX " +
             "<BIOS.BIN> [--disc jogo.cue|jogo.bin] " +
             "[--batch N] [--paused] [--frames N]");
     }
