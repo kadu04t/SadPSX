@@ -1,5 +1,9 @@
 # SadPSX
 
+<p align="center">
+  <img src="docs/assets/sadpsx-logo.png" alt="SadPSX — A PlayStation Emulator" width="360">
+</p>
+
 **English** | [Português (Brasil)](README.pt-BR.md)
 
 SadPSX is an experimental PlayStation emulator written in C# and .NET 10.
@@ -31,6 +35,21 @@ The SCPH-1001 BIOS reaches the console menu. Rayman has been tested through its
 intro and into playable gameplay with a controller. This is not a compatibility
 guarantee: visual corruption, imperfect audio, missing features, hangs, and
 crashes are expected.
+
+## Tested Games
+
+Compatibility results describe specific test sessions, not guaranteed support
+for every region, revision, or disc dump.
+
+| Game | Status | Observed behavior |
+| --- | --- | --- |
+| Rayman | Playable | Boots through the BIOS, plays the opening sequence, reaches gameplay, and accepts SDL3 gamepad input. Graphics still contain visible accuracy problems and audio can stutter or play incorrectly. |
+
+<p align="center">
+  <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman running in SadPSX" width="900">
+</p>
+
+<p align="center"><em>Rayman running in SadPSX during a compatibility test.</em></p>
 
 ## Implemented Components
 
@@ -409,6 +428,9 @@ SadPSX/
 │   └── Controllers/
 ├── BiosPS1/          # Local BIOS dumps, ignored by Git
 ├── GamesPS1/         # Local disc images, ignored by Git
+├── docs/
+│   ├── assets/       # Project logo and application icon
+│   └── screenshots/  # Compatibility screenshots
 ├── scripts/          # Validation and release packaging
 └── SadPSX.slnx
 ```
@@ -450,8 +472,10 @@ Release history is documented in [CHANGELOG.md](CHANGELOG.md).
 
 ## Legal Notice
 
-No Sony BIOS, games, keys, or copyrighted console assets are included. Use only
-BIOS and disc images dumped legally from hardware and media you own.
+No Sony BIOS, game images, keys, or proprietary runtime assets are included.
+Use only BIOS and disc images dumped legally from hardware and media you own.
+Compatibility screenshots remain the property of their respective copyright
+holders and are shown only to document emulator behavior.
 
 SadPSX is an independent project and is not affiliated with, associated with,
 authorized by, endorsed by, or in any way officially connected with Sony

@@ -1,5 +1,9 @@
 # SadPSX
 
+<p align="center">
+  <img src="docs/assets/sadpsx-logo.png" alt="SadPSX — A PlayStation Emulator" width="360">
+</p>
+
 [English](README.md) | **Português (Brasil)**
 
 SadPSX é um emulador experimental de PlayStation 1 escrito em C# e .NET.
@@ -41,6 +45,21 @@ Na validação atual, a BIOS SCPH-1001 chega ao menu do console e o Rayman inici
 reproduz sua abertura, reconhece controles SDL3 e entra em gameplay. A
 compatibilidade ainda é experimental: existem defeitos visuais, falhas de
 áudio e jogos que podem não iniciar ou travar.
+
+## Jogos testados
+
+Os resultados de compatibilidade descrevem sessões específicas de teste e não
+garantem suporte a todas as regiões, revisões ou imagens de disco.
+
+| Jogo | Estado | Comportamento observado |
+| --- | --- | --- |
+| Rayman | Jogável | Inicia pela BIOS, reproduz a abertura, chega ao gameplay e aceita controles SDL3. Os gráficos ainda apresentam problemas visíveis de precisão e o áudio pode falhar ou engasgar. |
+
+<p align="center">
+  <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman executando no SadPSX" width="900">
+</p>
+
+<p align="center"><em>Rayman executando no SadPSX durante um teste de compatibilidade.</em></p>
 
 ## Componentes implementados
 
@@ -218,10 +237,12 @@ Por motivos legais, nenhuma BIOS é distribuída com o projeto. Utilize uma
 imagem extraída de um console que você possui e coloque-a, por exemplo, em
 `BiosPS1/SCPH1001.BIN`. O diretório `BiosPS1/` é ignorado pelo Git.
 
-O projeto também não distribui jogos, imagens de disco ou outros conteúdos
-protegidos. Use somente dumps obtidos legalmente de mídias que você possui.
-SadPSX não é afiliado, associado ou endossado pela Sony Interactive
-Entertainment.
+O projeto também não distribui jogos, imagens de disco, chaves ou arquivos
+proprietários necessários à execução. Use somente dumps obtidos legalmente de
+mídias que você possui. Capturas de compatibilidade pertencem aos respectivos
+detentores dos direitos e são exibidas apenas para documentar o comportamento
+do emulador. SadPSX não é afiliado, associado ou endossado pela Sony
+Interactive Entertainment.
 
 ## Compilação
 
@@ -441,6 +462,9 @@ SadPSX/
 │   └── Controllers/  # Testes do SIO0 e controle digital
 ├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
 ├── GamesPS1/         # Imagens locais de jogos, ignoradas pelo Git
+├── docs/
+│   ├── assets/       # Logo do projeto e ícone do aplicativo
+│   └── screenshots/  # Capturas de compatibilidade
 ├── scripts/          # Validação e empacotamento
 └── SadPSX.slnx
 ```

@@ -16,6 +16,8 @@ $archivePath = Join-Path $releaseDirectory "$releaseName.zip"
 
 Push-Location $repositoryRoot
 try {
+    & "$PSScriptRoot\create-icon.ps1"
+
     if (Test-Path -LiteralPath $publishDirectory) {
         Remove-Item -LiteralPath $publishDirectory -Recurse -Force
     }
@@ -51,6 +53,7 @@ try {
     Copy-Item -LiteralPath "LICENSE" -Destination $publishDirectory
     Copy-Item -LiteralPath "CHANGELOG.md" -Destination $publishDirectory
     Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination $publishDirectory
+    Copy-Item -LiteralPath "docs" -Destination $publishDirectory -Recurse
 
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force

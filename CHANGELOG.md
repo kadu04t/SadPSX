@@ -15,6 +15,7 @@ The project follows [Semantic Versioning](https://semver.org/).
 - CD-ROM boot, BIN/CUE support, CD-DA playback, SPU voices, and MDEC decoding.
 - Digital keyboard and SDL3 gamepad input.
 - Diagnostic CLI, runtime console, logging, and 359 automated tests.
+- SadPSX application icon, project logo, and compatibility documentation.
 
 ### Known Issues
 
