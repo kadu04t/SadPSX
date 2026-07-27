@@ -4,6 +4,7 @@ using SadPSX.Core.Controllers;
 using SadPSX.Frontend.Audio;
 using SadPSX.Frontend.Diagnostics;
 using SadPSX.Frontend.Input;
+using SadPSX.Frontend.Launcher;
 using SadPSX.Frontend.Video;
 using SDL3;
 
@@ -53,26 +54,30 @@ internal sealed class FrontendApplication : IDisposable
 
     public static int Run(string[] arguments)
     {
-        FrontendOptions options;
-        try
+        FrontendOptions? options = null;
+        if (arguments.Length > 0)
         {
-            options = FrontendOptions.Parse(arguments);
-        }
-        catch (ArgumentException exception)
-        {
-            Console.Error.WriteLine($"Erro: {exception.Message}");
-            PrintUsage();
-            return 1;
+            try
+            {
+                options = FrontendOptions.Parse(arguments);
+            }
+            catch (ArgumentException exception)
+            {
+                Console.Error.WriteLine($"Erro: {exception.Message}");
+                PrintUsage();
+                return 1;
+            }
         }
 
-        if (!File.Exists(options.BiosPath))
+        if (options is not null && !File.Exists(options.BiosPath))
         {
             Console.Error.WriteLine(
                 $"Erro: arquivo de BIOS não encontrado: {options.BiosPath}");
             return 1;
         }
 
-        if (options.DiscPath is not null && !File.Exists(options.DiscPath))
+        if (options?.DiscPath is not null &&
+            !File.Exists(options.DiscPath))
         {
             Console.Error.WriteLine(
                 $"Erro: imagem de disco não encontrada: {options.DiscPath}");
@@ -91,6 +96,14 @@ internal sealed class FrontendApplication : IDisposable
 
         try
         {
+            if (options is null)
+            {
+                using var launcher = new SdlLauncher();
+                options = launcher.Run();
+                if (options is null)
+                    return 0;
+            }
+
             using var application = new FrontendApplication(options);
             application.PrintStartup(options);
             application.MainLoop();

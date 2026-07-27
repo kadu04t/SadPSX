@@ -29,6 +29,7 @@ SadPSX currently provides:
 - SPU voices with ADPCM, ADSR, mixing, and SDL3 audio output.
 - MDEC RLE/IDCT decoding and DMA transfers.
 - Digital controller input through keyboard or SDL3-compatible gamepads.
+- A basic launcher for selecting BIOS and BIN/CUE files.
 - An SDL3 video frontend and diagnostic console.
 
 The SCPH-1001 BIOS reaches the console menu. Rayman has been tested through its
@@ -259,6 +260,11 @@ From the Windows release:
 .\SadPSX.exe .\SCPH1001.BIN --disc .\Game.cue
 ```
 
+Double-clicking `SadPSX.exe` without arguments opens a small launcher. Select a
+512 KiB BIOS, optionally select a `.cue` or `.bin` disc image, and press
+**Start**. Command-line arguments remain available for development and
+automation.
+
 Controls:
 
 - SDL3-compatible Xbox, PlayStation, and generic gamepads are detected while
@@ -437,7 +443,7 @@ SadPSX/
 
 ## Known Limitations
 
-- No graphical menus, persistent settings, BIOS selector, or game library.
+- No complete settings interface, persistent configuration, or game library.
 - No speed synchronization or dedicated CPU thread.
 - GPU rasterization and DMA/FIFO timing are not pixel- or cycle-perfect.
 - DMA chopping, channel arbitration, bus contention, PIO transfers, and timing

@@ -34,6 +34,7 @@ O SadPSX já consegue:
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
 - Consultar um controle digital pelo SIO0 e usar teclado ou gamepad SDL3.
+- Abrir um launcher básico para selecionar BIOS e imagens BIN/CUE.
 - Exibir o progresso POST da BIOS no console de diagnóstico.
 - Detectar overflow, acessos desalinhados e erros de barramento.
 - Bloquear acessos de usuário aos segmentos do kernel.
@@ -267,6 +268,11 @@ dotnet run -c Release --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
   --disc .\GamesPS1\Jogo.cue
 ```
 
+Ao abrir `SadPSX.exe` sem argumentos, uma janela simples permite selecionar uma
+BIOS de 512 KiB, escolher opcionalmente uma imagem `.cue` ou `.bin` e iniciar o
+emulador pelo botão **Start**. Os argumentos de linha de comando continuam
+disponíveis para desenvolvimento e automação.
+
 Quando a imagem possui uma estrutura inicializável, o console mostra o
 executável encontrado em `SYSTEM.CNF`. O relatório `F1` inclui o último comando
 do CD-ROM, quantidade de comandos, LBA atual e estado de leitura.
@@ -473,7 +479,7 @@ SadPSX/
 
 O SadPSX ainda não possui:
 
-- Menus, configuração persistente e seleção gráfica de BIOS/disco.
+- Interface completa de configurações, persistência e biblioteca de jogos.
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA do canal PIO.
