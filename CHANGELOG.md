@@ -14,6 +14,9 @@ The project follows [Semantic Versioning](https://semver.org/).
 - SPU noise generation, pitch modulation, capture buffers, and IRQ9.
 - GPU DMA FIFO with backpressure, DPCR priority arbitration, and burst
   chopping.
+- XA-ADPCM decoding with 37.8/18.9 kHz resampling and CD-ROM channel filtering.
+- CD-ROM stereo volume matrix and SPU fixed/linear/exponential volume sweeps.
+- Integer MDEC IDCT driven by the uploaded scale table.
 
 ### Changed
 
@@ -21,6 +24,8 @@ The project follows [Semantic Versioning](https://semver.org/).
   exponential ADSR attack timing.
 - GPU DMA words are consumed on GPU clock ticks instead of executing
   immediately when written by DMA2.
+- MDEC coefficient placement, saturation, color conversion, and current-block
+  status now follow the hardware data path more closely.
 
 ## [0.0.1-beta.1] - 2026-07-27
 

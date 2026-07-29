@@ -180,17 +180,20 @@ The SPU preserves its MMIO registers, reflects `SPUCNT` mode in `SPUSTAT`,
 provides 512 KiB of sound RAM, and accepts manual or DMA4 transfers.
 
 Its 24 voices decode ADPCM blocks and implement fractional interpolation,
-pitch modulation, noise generation, loop, key on/off, ADSR, and stereo volume.
-The mixer receives CD-DA PCM, writes the hardware capture buffers for CD audio
-and voices 1/3, and can raise IRQ9 from voice, capture, or transfer Sound RAM
-accesses. The frontend sends 44.1 kHz output to an SDL3 audio stream.
+pitch modulation, noise generation, loop, key on/off, ADSR, fixed volume, and
+volume sweeps. The mixer receives CD-DA and decoded XA-ADPCM audio, writes the
+hardware capture buffers for CD audio and voices 1/3, and can raise IRQ9 from
+voice, capture, or transfer Sound RAM accesses. The frontend sends 44.1 kHz
+output to an SDL3 audio stream.
 
 ### MDEC
 
 The Macroblock Decoder accepts commands from the CPU or DMA0, loads
 quantization and scale tables, and decodes RLE blocks through an IDCT.
-Monochrome 4/8 bpp and color 15/24 bpp output is exposed through its FIFO and
-can return to RAM through DMA1.
+The integer two-pass IDCT uses the uploaded hardware scale matrix, applies the
+MDEC zigzag and saturation rules, and reports the current macroblock through
+the status register. Monochrome 4/8 bpp and color 15/24 bpp output is exposed
+through its FIFO and can return to RAM through DMA1.
 
 ### Memory
 
@@ -405,9 +408,9 @@ The tests cover:
 - GPU control handshakes, GP0 packets, VRAM transfers, and rasterization.
 - NTSC/PAL timing, dotclock, HBlank, VBlank, and IRQ0.
 - DMA0-DMA4 block transfers, DMA2 linked lists, DMA6/OTC, and IRQ3.
-- MDEC tables, RLE, IDCT, output formats, and DMA0/1.
-- SPU voices, ADPCM, pitch, ADSR, stereo mixing, and DMA4.
-- CD-DA playback, AutoPause, `INT4`, and SPU mixing.
+- MDEC tables, integer IDCT, status, output formats, and DMA0/1.
+- SPU voices, ADPCM, pitch, ADSR, volume sweeps, stereo mixing, and DMA4.
+- CD-DA/XA-ADPCM playback, resampling, CD volume matrix, AutoPause, and `INT4`.
 - SDL3 video, audio, gamepad input, and frontend behavior.
 - SIO0 timing, digital controller protocol, IRQ7, and BIOS POST.
 - Address translation, bus routing, RAM, scratchpad, BIOS, and open bus.
@@ -461,10 +464,10 @@ SadPSX/
 - DMA bus contention, PIO transfers, and timing outside DMA2 are incomplete.
 - GTE lighting/color commands and saturation behavior are not complete.
 - Memory cards, DualShock, and analog controller protocols are missing.
-- CD-ROM periodic `Play` reports, volume matrix, and XA-ADPCM are missing.
-- SPU Gaussian interpolation, reverb, volume sweeps, and complete envelope
-  accuracy need further work.
-- MDEC IDCT and FIFO timing need additional precision.
+- CD-ROM periodic `Play` reports and XA emphasis are missing.
+- SPU Gaussian interpolation, reverb, and complete envelope accuracy need
+  further work.
+- MDEC FIFO timing and hardware rounding edge cases need additional precision.
 - Bus contention, CPU stalls, and instruction cache behavior are approximate.
 
 Other MMIO peripherals remain stubbed. Video timing covers the signals needed
@@ -478,8 +481,8 @@ The planned accuracy blocks are:
 1. Precise GPU rasterization, FIFO behavior, and DMA interaction.
 2. Complete GTE commands, flags, saturation, and edge cases.
 3. Memory cards, DualShock, and controller configuration.
-4. Advanced SPU behavior and XA-ADPCM audio.
-5. Precise MDEC output and FIFO timing.
+4. SPU Gaussian interpolation, reverb, and envelope edge cases.
+5. Precise MDEC FIFO timing and hardware rounding edge cases.
 6. Central event scheduling, bus contention, and timing accuracy.
 7. Compatibility tests, regression diagnostics, and performance optimization.
 

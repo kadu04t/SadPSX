@@ -181,17 +181,18 @@ root counters com dotclock e HBlank.
 A SPU preserva os registradores MMIO, aplica o modo de `SPUCNT` em `SPUSTAT`,
 fornece 512 KiB de RAM de som e transfere dados manualmente ou por DMA4. As 24
 vozes decodificam blocos ADPCM e aplicam interpolação fracionária, pitch
-modulation, noise, loop, key on/off, ADSR e volumes estéreo. A mistura também
-recebe o PCM das faixas CD-DA, preenche os capture buffers de CD e das vozes
-1/3 e pode gerar IRQ9 por acessos de voz, captura ou transferência à Sound
-RAM. O frontend envia a saída de 44,1 kHz para um stream SDL3.
+modulation, noise, loop, key on/off, ADSR, volumes fixos e volume sweep. A
+mistura recebe CD-DA e XA-ADPCM decodificado, preenche os capture buffers de CD
+e das vozes 1/3 e pode gerar IRQ9 por acessos de voz, captura ou transferência
+à Sound RAM. O frontend envia a saída de 44,1 kHz para um stream SDL3.
 
 ### MDEC
 
 O Macroblock Decoder recebe comandos pela CPU ou DMA0, carrega tabelas de
 quantização e escala e decodifica blocos RLE com IDCT. A saída monocromática de
 4/8 bpp e colorida de 15/24 bpp fica disponível no FIFO e pode retornar à RAM
-por DMA1.
+por DMA1. A IDCT inteira em duas passagens usa a matriz de escala enviada ao
+hardware, aplica zigzag e saturação do MDEC e informa o bloco atual no status.
 
 ### Memória
 
@@ -434,9 +435,9 @@ Os testes cobrem:
 - Pacotes GP0, transferências de VRAM e primitivas gráficas básicas.
 - Timing NTSC/PAL, dotclock, HBlank, VBlank e IRQ0.
 - DMA0-DMA4 por blocos, DMA2 linked-list, DMA6/OTC e IRQ3.
-- MDEC com tabelas, RLE, IDCT e saídas de 4/8/15/24 bpp.
-- SPU com 24 vozes, ADPCM, pitch, ADSR, mistura estéreo e DMA4.
-- Reprodução CD-DA, AutoPause, `INT4` e mistura das faixas na SPU.
+- MDEC com tabelas, IDCT inteira, status e saídas de 4/8/15/24 bpp.
+- SPU com 24 vozes, ADPCM, pitch, ADSR, volume sweep, mistura estéreo e DMA4.
+- Reprodução CD-DA/XA-ADPCM, resampling, matriz de volume, AutoPause e `INT4`.
 - Saída de áudio SDL3 em 44,1 kHz no frontend.
 - SIO0, protocolo do controle digital, IRQ e POST da BIOS.
 - Tradução e roteamento do barramento.
@@ -497,10 +498,9 @@ O SadPSX ainda não possui:
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.
-- Relatórios periódicos de `Play`, matriz de volume do CD-ROM e áudio XA-ADPCM.
-- Interpolação Gaussiana, reverb, volume sweep e precisão completa dos
-  envelopes da SPU.
-- Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
+- Relatórios periódicos de `Play` e emphasis do XA.
+- Interpolação Gaussiana, reverb e precisão completa dos envelopes da SPU.
+- Timing dos FIFOs e casos extremos de arredondamento do MDEC.
 - Protocolo DualShock, controles analógicos e memory cards.
 - Stalls da CPU e contenção precisa de barramento.
 - Implementação completa da instruction cache.
