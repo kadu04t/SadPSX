@@ -5,9 +5,13 @@ namespace SadPSX.Core.Gte;
 public sealed class Gte
 {
     private const uint ErrorMask = 0x7F87_E000;
+    private const long MacMinimum = -(1L << 43);
+    private const long MacMaximum = (1L << 43) - 1;
+    private const long MacMask = (1L << 44) - 1;
 
     private readonly uint[] _data = new uint[32];
     private readonly uint[] _control = new uint[32];
+    private readonly long[] _mac = new long[4];
 
     private uint _flags;
 
@@ -15,6 +19,7 @@ public sealed class Gte
     {
         Array.Clear(_data);
         Array.Clear(_control);
+        Array.Clear(_mac);
         _flags = 0;
     }
 
@@ -68,6 +73,8 @@ public sealed class Gte
 
             default:
                 _data[index] = value;
+                if (index is >= 24 and <= 27)
+                    _mac[index - 24] = unchecked((int)value);
                 break;
         }
     }
@@ -107,12 +114,15 @@ public sealed class Gte
             0x01 => ExecuteRtps(command),
             0x06 => ExecuteNclip(),
             0x0C => ExecuteOuterProduct(command),
+            0x10 => ExecuteDepthCueColor(command),
+            0x11 => ExecuteInterpolate(command),
             0x12 => ExecuteMatrixVectorMultiply(command),
             0x13 => ExecuteNormalColor(
                 command,
                 vectorCount: 1,
                 multiplyColor: true,
                 depthCue: true),
+            0x14 => ExecuteColorDepthCue(command),
             0x16 => ExecuteNormalColor(
                 command,
                 vectorCount: 3,
@@ -123,6 +133,7 @@ public sealed class Gte
                 vectorCount: 1,
                 multiplyColor: true,
                 depthCue: false),
+            0x1C => ExecuteColorColor(command),
             0x1E => ExecuteNormalColor(
                 command,
                 vectorCount: 1,
@@ -134,9 +145,13 @@ public sealed class Gte
                 multiplyColor: false,
                 depthCue: false),
             0x28 => ExecuteSquare(command),
+            0x29 => ExecuteDepthCueLight(command),
+            0x2A => ExecuteDepthCueColors(command),
             0x2D => ExecuteAverageDepth(3),
             0x2E => ExecuteAverageDepth(4),
             0x30 => ExecuteRtpt(command),
+            0x3D => ExecuteGeneralPurpose(command, accumulate: false),
+            0x3E => ExecuteGeneralPurpose(command, accumulate: true),
             0x3F => ExecuteNormalColor(
                 command,
                 vectorCount: 3,
@@ -189,7 +204,7 @@ public sealed class Gte
         long factor = Divide((ushort)_control[26], (ushort)_data[19]);
         long projectedX = factor * DataSigned16(9) + ControlSigned(24);
         long projectedY = factor * DataSigned16(10) + ControlSigned(25);
-        _data[24] = unchecked((uint)projectedY);
+        SetMac0(projectedY);
 
         int screenX = ClampScreen(projectedX >> 16, isY: false);
         int screenY = ClampScreen(projectedY >> 16, isY: true);
@@ -198,7 +213,7 @@ public sealed class Gte
         if (updateIr0)
         {
             long depthCue = factor * ControlSigned16(27) + ControlSigned(28);
-            _data[24] = unchecked((uint)depthCue);
+            SetMac0(depthCue);
             _data[8] = (uint)ClampIr0(depthCue >> 12);
         }
     }
@@ -210,7 +225,7 @@ public sealed class Gte
         (int sx2, int sy2) = ReadScreenCoordinate(14);
         long result = (long)sx0 * sy1 + (long)sx1 * sy2 + (long)sx2 * sy0 -
                       (long)sx0 * sy2 - (long)sx1 * sy0 - (long)sx2 * sy1;
-        _data[24] = unchecked((uint)result);
+        SetMac0(result);
         return true;
     }
 
@@ -255,14 +270,113 @@ public sealed class Gte
         return true;
     }
 
+    private bool ExecuteDepthCueColor(uint command)
+    {
+        SetMacFromColor(_data[6], shift: 16);
+        FinishDepthCue(command);
+        return true;
+    }
+
+    private bool ExecuteInterpolate(uint command)
+    {
+        for (int index = 1; index <= 3; index++)
+            SetMac(index, (long)DataSigned16(8 + index) << 12);
+
+        FinishDepthCue(command);
+        return true;
+    }
+
+    private bool ExecuteColorDepthCue(uint command)
+    {
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
+        ApplyColorMatrix(shift, limitMode);
+        MultiplyPrimaryColor();
+        ApplyDepthCue(shift, limitMode);
+        PushColor();
+        return true;
+    }
+
+    private bool ExecuteColorColor(uint command)
+    {
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
+        ApplyColorMatrix(shift, limitMode);
+        MultiplyPrimaryColor();
+        ShiftMacVector(shift, limitMode);
+        PushColor();
+        return true;
+    }
+
+    private bool ExecuteDepthCueLight(uint command)
+    {
+        uint color = _data[6];
+        for (int index = 1; index <= 3; index++)
+        {
+            int component = (byte)(color >> ((index - 1) * 8));
+            SetMac(
+                index,
+                (long)component * DataSigned16(8 + index) << 4);
+        }
+
+        FinishDepthCue(command);
+        return true;
+    }
+
+    private bool ExecuteDepthCueColors(uint command)
+    {
+        for (int iteration = 0; iteration < 3; iteration++)
+        {
+            SetMacFromColor(_data[20], shift: 16);
+            FinishDepthCue(command);
+        }
+
+        return true;
+    }
+
+    private bool ExecuteGeneralPurpose(uint command, bool accumulate)
+    {
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
+        int interpolation = DataSigned16(8);
+
+        for (int index = 1; index <= 3; index++)
+        {
+            long accumulator = accumulate ? _mac[index] << shift : 0;
+            long value = accumulator +
+                         (long)DataSigned16(8 + index) * interpolation;
+            SetMacAndIr(index, value >> shift, limitMode);
+        }
+
+        PushColor();
+        return true;
+    }
+
+    private void SetMacFromColor(uint color, int shift)
+    {
+        for (int index = 1; index <= 3; index++)
+        {
+            int component = (byte)(color >> ((index - 1) * 8));
+            SetMac(index, (long)component << shift);
+        }
+    }
+
+    private void FinishDepthCue(uint command)
+    {
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
+        ApplyDepthCue(shift, limitMode);
+        PushColor();
+    }
+
     private bool ExecuteNormalColor(
         uint command,
         int vectorCount,
         bool multiplyColor,
         bool depthCue)
     {
-        int shift = (command & (1u << 19)) != 0 ? 12 : 0;
-        bool limitMode = (command & (1u << 10)) != 0;
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
 
         for (int vectorIndex = 0;
              vectorIndex < vectorCount;
@@ -324,7 +438,7 @@ public sealed class Gte
             int component = (byte)(color >> ((index - 1) * 8));
             long value =
                 (long)component * DataSigned16(8 + index) * 16;
-            _data[24 + index] = unchecked((uint)value);
+            SetMac(index, value);
         }
     }
 
@@ -333,7 +447,7 @@ public sealed class Gte
         int interpolation = DataSigned16(8);
         for (int index = 1; index <= 3; index++)
         {
-            long current = unchecked((int)_data[24 + index]);
+            long current = _mac[index];
             long difference =
                 ((long)ControlSigned(20 + index) << 12) - current;
             int differenceIr = ClampIr(
@@ -349,7 +463,7 @@ public sealed class Gte
     {
         for (int index = 1; index <= 3; index++)
         {
-            long value = unchecked((int)_data[24 + index]);
+            long value = _mac[index];
             SetMacAndIr(index, value >> shift, limitMode);
         }
     }
@@ -358,13 +472,13 @@ public sealed class Gte
     {
         uint sourceColor = _data[6];
         uint red = (uint)ClampColor(
-            unchecked((int)_data[25]) >> 4,
+            _mac[1] >> 4,
             0);
         uint green = (uint)ClampColor(
-            unchecked((int)_data[26]) >> 4,
+            _mac[2] >> 4,
             1);
         uint blue = (uint)ClampColor(
-            unchecked((int)_data[27]) >> 4,
+            _mac[3] >> 4,
             2);
         uint color =
             red |
@@ -396,8 +510,8 @@ public sealed class Gte
 
     private bool ExecuteSquare(uint command)
     {
-        int shift = (command & (1u << 19)) != 0 ? 12 : 0;
-        bool limitMode = (command & (1u << 10)) != 0;
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
 
         for (int index = 1; index <= 3; index++)
         {
@@ -417,7 +531,7 @@ public sealed class Gte
 
         int scale = ControlSigned16(count == 3 ? 29 : 30);
         long result = sum * scale;
-        _data[24] = unchecked((uint)result);
+        SetMac0(result);
         _data[7] = (uint)ClampDepth(result >> 12);
         return true;
     }
@@ -466,8 +580,35 @@ public sealed class Gte
 
     private void SetMacAndIr(int index, long value, bool limitMode)
     {
-        _data[24 + index] = unchecked((uint)value);
-        _data[8 + index] = unchecked((uint)ClampIr(index, value, limitMode));
+        long mac = SetMac(index, value);
+        _data[8 + index] = unchecked((uint)ClampIr(index, mac, limitMode));
+    }
+
+    private long SetMac(int index, long value)
+    {
+        if (value > MacMaximum)
+            _flags |= 1u << (31 - index);
+        if (value < MacMinimum)
+            _flags |= 1u << (28 - index);
+
+        long truncated = value & MacMask;
+        if ((truncated & (1L << 43)) != 0)
+            truncated |= ~MacMask;
+
+        _mac[index] = truncated;
+        _data[24 + index] = unchecked((uint)truncated);
+        return truncated;
+    }
+
+    private void SetMac0(long value)
+    {
+        if (value > int.MaxValue)
+            _flags |= 1u << 16;
+        if (value < int.MinValue)
+            _flags |= 1u << 15;
+
+        _mac[0] = unchecked((int)value);
+        _data[24] = unchecked((uint)value);
     }
 
     private int ClampIr(int index, long value, bool limitMode)
@@ -541,18 +682,25 @@ public sealed class Gte
 
     private long Divide(ushort h, ushort depth)
     {
-        if (depth == 0 || depth <= h / 2)
+        if ((uint)h >= (uint)depth * 2)
         {
             _flags |= 1u << 17;
             return 0x1FFFF;
         }
 
-        long result = (((long)h * 0x20000 / depth) + 1) / 2;
-        if (result <= 0x1FFFF)
-            return result;
-
-        _flags |= 1u << 17;
-        return 0x1FFFF;
+        int shift = BitOperations.LeadingZeroCount(depth) - 16;
+        uint numerator = (uint)h << shift;
+        uint denominator = (uint)depth << shift;
+        int tableIndex = (int)((denominator - 0x7FC0) >> 7);
+        long reciprocal = Math.Max(
+            0,
+            ((0x40000 / (tableIndex + 0x100) + 1) / 2) - 0x101) +
+            0x101;
+        long refined = (0x0200_0080L - denominator * reciprocal) >> 8;
+        refined = (0x80 + refined * reciprocal) >> 8;
+        return Math.Min(
+            0x1FFFF,
+            (numerator * refined + 0x8000) >> 16);
     }
 
     private void PushDepth(int value)
@@ -584,6 +732,12 @@ public sealed class Gte
     private int ControlSigned16(int index) => (short)_control[index];
 
     private int ControlSigned(int index) => unchecked((int)_control[index]);
+
+    private static int CommandShift(uint command) =>
+        (command & (1u << 19)) != 0 ? 12 : 0;
+
+    private static bool CommandLimitMode(uint command) =>
+        (command & (1u << 10)) != 0;
 
     private void UpdateErrorFlag()
     {
