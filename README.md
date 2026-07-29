@@ -306,6 +306,7 @@ Diagnostic shortcuts:
 - `F2`: Current instruction and CPU registers.
 - `F3`: Unhandled MMIO accesses.
 - `F4`: Recent CPU exceptions.
+- `F5`: Recent SIO0 controller and memory-card transactions.
 
 Logs are written to the `Logs/` directory next to the executable.
 

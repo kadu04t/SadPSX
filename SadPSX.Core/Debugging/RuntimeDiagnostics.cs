@@ -1,4 +1,5 @@
 using SadPSX.Core.Bus;
+using SadPSX.Core.Controllers;
 using SadPSX.Core.Cpu;
 
 namespace SadPSX.Core.Debugging;
@@ -100,10 +101,14 @@ public sealed class RuntimeDiagnostics : IDisposable
             .ThenBy(summary => summary.Address)
             .ToArray();
 
+    public IReadOnlyList<Sio0TransferTrace> CaptureSio0Transfers() =>
+        _machine.Bus.Sio0.TransferHistory.ToArray();
+
     public void Clear()
     {
         _exceptionCounts.Clear();
         _recentExceptions.Clear();
+        _machine.Bus.Sio0.ClearTransferHistory();
     }
 
     public void Dispose()

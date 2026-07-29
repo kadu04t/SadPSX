@@ -1,6 +1,7 @@
 using SadPSX.Core;
 using SadPSX.Core.Bios;
 using SadPSX.Core.Bus;
+using SadPSX.Core.Controllers;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
 
@@ -183,7 +184,44 @@ internal sealed class DiagnosticConsole : IDisposable
         {
             WriteRaw(
                 $"{exception.Code,-22} PC=0x{exception.FaultingPc:X8} " +
-                $"EPC=0x{exception.Epc:X8} BD={exception.InBranchDelaySlot}");
+                $"EPC=0x{exception.Epc:X8} BD={exception.InBranchDelaySlot}" +
+                FormatExceptionInstruction(exception));
+        }
+    }
+
+    public void PrintSio0(int maximumEntries = 64)
+    {
+        IReadOnlyList<Sio0TransferTrace> transfers =
+            _diagnostics.CaptureSio0Transfers();
+        WriteHeader("Transações SIO0 recentes");
+        if (transfers.Count == 0)
+        {
+            WriteRaw("Nenhuma transferência registrada.");
+            return;
+        }
+
+        foreach (Sio0TransferTrace transfer in
+                 transfers.TakeLast(maximumEntries))
+        {
+            string peripheral = transfer.Peripheral switch
+            {
+                Sio0PeripheralKind.Controller => "PAD ",
+                Sio0PeripheralKind.MemoryCard => "CARD",
+                _ => "UNKN",
+            };
+            string acknowledge = transfer.Acknowledge
+                ? $"sim@{transfer.AcknowledgeCycle}"
+                : "não";
+            WriteRaw(
+                $"#{transfer.Sequence:D6} " +
+                $"T{transfer.Transaction:D5}[{transfer.ByteIndex:D3}] " +
+                $"ciclos={transfer.StartCycle}-{transfer.EndCycle} " +
+                $"P{transfer.Port} {peripheral} " +
+                $"conectado={(transfer.Connected ? "sim" : "não")} " +
+                $"fila={(transfer.Queued ? "sim" : "não")} " +
+                $"TX=0x{transfer.Transmit:X2} RX=0x{transfer.Receive:X2} " +
+                $"ACK={acknowledge} CTRL=0x{transfer.Control:X4} " +
+                $"MODE=0x{transfer.Mode:X4} BAUD=0x{transfer.Baud:X4}");
         }
     }
 
@@ -275,7 +313,26 @@ internal sealed class DiagnosticConsole : IDisposable
         Write(
             DiagnosticLevel.Error,
             $"{exception.Code} em PC=0x{exception.FaultingPc:X8}, " +
-            $"EPC=0x{exception.Epc:X8}, delay-slot={exception.InBranchDelaySlot}.");
+            $"EPC=0x{exception.Epc:X8}, delay-slot={exception.InBranchDelaySlot}" +
+            FormatExceptionInstruction(exception) + ".");
+
+        if (exception.Code == ExceptionCode.Breakpoint)
+            PrintSio0(maximumEntries: 160);
+    }
+
+    private static string FormatExceptionInstruction(
+        CpuExceptionInfo exception)
+    {
+        if (exception.RawInstruction is not uint rawInstruction)
+            return " Instr=<indisponível>";
+
+        string disassembly = Disassembler.Disassemble(
+            new Instruction(rawInstruction),
+            exception.FaultingPc);
+        string breakCode = exception.BreakCode is uint code
+            ? $" BreakCode=0x{code:X5}"
+            : string.Empty;
+        return $" Instr=0x{rawInstruction:X8} ({disassembly}){breakCode}";
     }
 
     private void WriteHeader(string title) =>

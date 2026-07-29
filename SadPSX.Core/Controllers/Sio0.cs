@@ -21,9 +21,12 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private const ushort PortSelect = 1 << 13;
     private const uint AcknowledgeDelayCycles = 100;
     private const uint AcknowledgePulseCycles = 100;
+    private const int MaximumTransferHistory = 512;
 
     private readonly InterruptController _interruptController;
     private readonly Queue<byte> _receiveFifo = new(8);
+    private readonly Queue<Sio0TransferTrace> _transferHistory =
+        new(MaximumTransferHistory);
 
     private ushort _mode;
     private ushort _control;
@@ -37,6 +40,23 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private uint _acknowledgeDelayRemaining;
     private uint _acknowledgeCyclesRemaining;
     private ISioPeripheral? _activePeripheral;
+    private Sio0PeripheralKind _activePeripheralKind;
+    private ulong _clockCycles;
+    private ulong _transferSequence;
+    private ulong _transactionSequence;
+    private ulong _activeTransaction;
+    private int _transactionByteIndex;
+    private byte _pendingTransmitByte;
+    private int _pendingPort;
+    private Sio0PeripheralKind _pendingPeripheralKind;
+    private bool _pendingPeripheralConnected;
+    private bool _pendingWasQueued;
+    private ulong _pendingTransferStartCycle;
+    private ulong _pendingTransaction;
+    private int _pendingTransactionByteIndex;
+    private ushort _pendingControl;
+    private ushort _pendingMode;
+    private ushort _pendingBaud;
 
     public Sio0(InterruptController interruptController)
     {
@@ -58,6 +78,9 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     public bool TransferPending => _transferPending;
     public bool InterruptRequest => _interruptRequest;
     public bool DsrAsserted => _acknowledgeCyclesRemaining > 0;
+    public ulong ClockCycles => _clockCycles;
+    public IReadOnlyCollection<Sio0TransferTrace> TransferHistory =>
+        _transferHistory;
 
     public void Reset()
     {
@@ -74,9 +97,28 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         _acknowledgeDelayRemaining = 0;
         _acknowledgeCyclesRemaining = 0;
         _activePeripheral = null;
+        _activePeripheralKind = Sio0PeripheralKind.Unknown;
+        _activeTransaction = 0;
+        _transactionByteIndex = 0;
+        _pendingTransmitByte = 0;
+        _pendingPort = 1;
+        _pendingPeripheralKind = Sio0PeripheralKind.Unknown;
+        _pendingPeripheralConnected = false;
+        _pendingWasQueued = false;
+        _pendingTransferStartCycle = 0;
+        _pendingTransaction = 0;
+        _pendingTransactionByteIndex = 0;
+        _pendingControl = 0;
+        _pendingMode = 0;
+        _pendingBaud = 0;
         ResetPeripheralTransfers();
         ControllerPort1.ReleaseAll();
         ControllerPort2?.ReleaseAll();
+    }
+
+    public void ClearTransferHistory()
+    {
+        _transferHistory.Clear();
     }
 
     public void AttachController(int port, IController? controller)
@@ -84,6 +126,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         ValidatePort(port);
         _activePeripheral?.ResetTransfer();
         _activePeripheral = null;
+        _activePeripheralKind = Sio0PeripheralKind.Unknown;
 
         if (port == 1)
         {
@@ -99,6 +142,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         ValidatePort(port);
         _activePeripheral?.ResetTransfer();
         _activePeripheral = null;
+        _activePeripheralKind = Sio0PeripheralKind.Unknown;
 
         if (port == 1)
             MemoryCardPort1 = memoryCard;
@@ -118,6 +162,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
                     _transferCyclesRemaining);
                 cyclesRemaining -= elapsed;
                 _transferCyclesRemaining -= elapsed;
+                _clockCycles += elapsed;
                 if (_transferCyclesRemaining == 0)
                 {
                     _transferPending = false;
@@ -133,6 +178,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
                     _acknowledgeDelayRemaining);
                 cyclesRemaining -= elapsed;
                 _acknowledgeDelayRemaining -= elapsed;
+                _clockCycles += elapsed;
                 if (_acknowledgeDelayRemaining == 0)
                     BeginAcknowledgePulse();
                 continue;
@@ -145,13 +191,17 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
                     _acknowledgeCyclesRemaining);
                 cyclesRemaining -= elapsed;
                 _acknowledgeCyclesRemaining -= elapsed;
+                _clockCycles += elapsed;
                 if (_acknowledgeCyclesRemaining == 0)
                     TryStartQueuedTransfer();
                 continue;
             }
 
             if (!TryStartQueuedTransfer())
+            {
+                _clockCycles += cyclesRemaining;
                 break;
+            }
         }
     }
 
@@ -353,6 +403,9 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         {
             ResetPeripheralTransfers();
             _activePeripheral = null;
+            _activePeripheralKind = Sio0PeripheralKind.Unknown;
+            _activeTransaction = 0;
+            _transactionByteIndex = 0;
             _transferPending = false;
             _transferCyclesRemaining = 0;
             _transmitQueued = false;
@@ -375,16 +428,32 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
             return;
         }
 
-        BeginTransfer(value);
+        BeginTransfer(value, queued: false);
     }
 
-    private void BeginTransfer(byte value)
+    private void BeginTransfer(byte value, bool queued)
     {
         if (_activePeripheral is null)
+        {
             _activePeripheral = ResolvePeripheral(value);
+            _activePeripheralKind = ResolvePeripheralKind(value);
+            _activeTransaction = ++_transactionSequence;
+            _transactionByteIndex = 0;
+        }
 
         _pendingResult = _activePeripheral?.Transfer(value) ??
             new ControllerTransferResult(0xFF, false);
+        _pendingTransmitByte = value;
+        _pendingPort = (_control & PortSelect) == 0 ? 1 : 2;
+        _pendingPeripheralKind = _activePeripheralKind;
+        _pendingPeripheralConnected = _activePeripheral is not null;
+        _pendingWasQueued = queued;
+        _pendingTransferStartCycle = _clockCycles;
+        _pendingTransaction = _activeTransaction;
+        _pendingTransactionByteIndex = _transactionByteIndex++;
+        _pendingControl = _control;
+        _pendingMode = _mode;
+        _pendingBaud = _baud;
         _transferPending = true;
         _transferCyclesRemaining = CalculateTransferCycles();
     }
@@ -402,7 +471,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
         byte value = _queuedTransmitByte;
         _transmitQueued = false;
-        BeginTransfer(value);
+        BeginTransfer(value, queued: true);
         return true;
     }
 
@@ -420,6 +489,8 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     private void CompleteTransfer()
     {
+        RecordTransfer();
+
         if (_receiveFifo.Count < 8)
             _receiveFifo.Enqueue(_pendingResult.Data);
 
@@ -428,6 +499,9 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         else
         {
             _activePeripheral = null;
+            _activePeripheralKind = Sio0PeripheralKind.Unknown;
+            _activeTransaction = 0;
+            _transactionByteIndex = 0;
             TryStartQueuedTransfer();
         }
 
@@ -487,6 +561,40 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
             0x81 => portTwo ? MemoryCardPort2 : MemoryCardPort1,
             _ => null,
         };
+    }
+
+    private static Sio0PeripheralKind ResolvePeripheralKind(byte address) =>
+        address switch
+        {
+            0x01 => Sio0PeripheralKind.Controller,
+            0x81 => Sio0PeripheralKind.MemoryCard,
+            _ => Sio0PeripheralKind.Unknown,
+        };
+
+    private void RecordTransfer()
+    {
+        if (_transferHistory.Count == MaximumTransferHistory)
+            _transferHistory.Dequeue();
+
+        _transferHistory.Enqueue(new Sio0TransferTrace(
+            ++_transferSequence,
+            _pendingTransaction,
+            _pendingTransactionByteIndex,
+            _pendingTransferStartCycle,
+            _clockCycles,
+            _pendingResult.Acknowledge
+                ? _clockCycles + AcknowledgeDelayCycles
+                : null,
+            _pendingPort,
+            _pendingPeripheralKind,
+            _pendingPeripheralConnected,
+            _pendingWasQueued,
+            _pendingTransmitByte,
+            _pendingResult.Data,
+            _pendingResult.Acknowledge,
+            _pendingControl,
+            _pendingMode,
+            _pendingBaud));
     }
 
     private void ResetPeripheralTransfers()

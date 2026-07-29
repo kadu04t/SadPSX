@@ -40,6 +40,27 @@ public sealed class Sio0Tests
         ];
 
         Assert.Equal([0xFF, 0x41, 0x5A, 0xFF, 0xBF], response);
+
+        Sio0TransferTrace[] trace = [.. bus.Sio0.TransferHistory];
+        Assert.Equal(5, trace.Length);
+        Assert.All(
+            trace,
+            entry =>
+            {
+                Assert.Equal(1, entry.Port);
+                Assert.Equal(
+                    Sio0PeripheralKind.Controller,
+                    entry.Peripheral);
+                Assert.True(entry.Connected);
+                Assert.Equal(trace[0].Transaction, entry.Transaction);
+            });
+        Assert.Equal([0, 1, 2, 3, 4],
+            trace.Select(entry => entry.ByteIndex));
+        Assert.Equal(0x01, trace[0].Transmit);
+        Assert.Equal(0xFF, trace[0].Receive);
+        Assert.Equal(0ul, trace[0].StartCycle);
+        Assert.Equal(1088ul, trace[0].EndCycle);
+        Assert.Equal(1188ul, trace[0].AcknowledgeCycle);
     }
 
     [Fact]
@@ -84,6 +105,8 @@ public sealed class Sio0Tests
         Assert.Equal(2, bus.Sio0.ReceiveCount);
         Assert.Equal(0xFF, bus.Read8(Sio0.DataAddress));
         Assert.Equal(0x41, bus.Read8(Sio0.DataAddress));
+        Assert.False(bus.Sio0.TransferHistory.First().Queued);
+        Assert.True(bus.Sio0.TransferHistory.Last().Queued);
     }
 
     [Fact]
@@ -139,6 +162,9 @@ public sealed class Sio0Tests
         ];
 
         Assert.Equal([0xFF, 0x41, 0x5A, 0xF7, 0xFF], response);
+        Assert.All(
+            bus.Sio0.TransferHistory,
+            entry => Assert.Equal(2, entry.Port));
     }
 
     private static Bus CreateConfiguredBus(ushort control = 0x0003)

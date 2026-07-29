@@ -309,6 +309,7 @@ Atalhos de diagnóstico:
 - `F2`: instrução atual e registradores da CPU.
 - `F3`: acessos MMIO ainda não implementados.
 - `F4`: exceções recentes da CPU.
+- `F5`: transações recentes do SIO0 com controles e memory cards.
 
 A entrada dos controles digital e analógico usa:
 

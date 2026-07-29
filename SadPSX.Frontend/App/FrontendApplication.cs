@@ -306,6 +306,10 @@ internal sealed class FrontendApplication : IDisposable
                 _diagnosticConsole.PrintExceptions();
                 break;
 
+            case SDL.Scancode.F5:
+                _diagnosticConsole.PrintSio0();
+                break;
+
             case SDL.Scancode.F11:
                 _videoOutput.ToggleFullscreen();
                 break;
@@ -369,6 +373,7 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("  F2      CPU e registradores");
         Console.WriteLine("  F3      MMIO não tratado");
         Console.WriteLine("  F4      Exceções recentes");
+        Console.WriteLine("  F5      Transações SIO0 recentes");
         Console.WriteLine("  F11     Alternar tela cheia");
         Console.WriteLine("  Esc     Sair");
         Console.WriteLine();
