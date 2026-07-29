@@ -70,9 +70,12 @@ public sealed class DisassemblerTests
     {
         var syscall = Disassembler.Disassemble(new Instruction(0x0000_000C));
         var brk = Disassembler.Disassemble(new Instruction(0x0000_000D));
+        var codedBreak = Disassembler.Disassemble(
+            new Instruction((0x12345u << 6) | 0x0D));
 
         Assert.Equal("syscall", syscall);
         Assert.Equal("break", brk);
+        Assert.Equal("break    0x12345", codedBreak);
     }
 
     [Fact]

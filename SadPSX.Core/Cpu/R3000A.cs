@@ -69,6 +69,8 @@ public sealed class R3000A
     private uint _loadDelayValueThisStep;
     private int _writtenRegisterThisStep = -1;
     private uint _currentStepCycles;
+    private uint _currentInstruction;
+    private bool _hasCurrentInstruction;
 
     public Cop0 Cop0 { get; } = new();
     public GeometryEngine Gte { get; } = new();
@@ -119,6 +121,8 @@ public sealed class R3000A
         _loadDelayValueThisStep = 0;
         _writtenRegisterThisStep = -1;
         _currentStepCycles = 0;
+        _currentInstruction = 0;
+        _hasCurrentInstruction = false;
 
         Cop0.Reset();
         Gte.Reset();
@@ -284,7 +288,8 @@ public sealed class R3000A
             code,
             faultingPc,
             epc,
-            inBranchDelaySlot));
+            inBranchDelaySlot,
+            _hasCurrentInstruction ? _currentInstruction : null));
     }
 
     private void RaiseAddressException(ExceptionCode code, uint badVirtualAddress)
@@ -358,6 +363,9 @@ public sealed class R3000A
     /// </summary>
     public void Execute(Instruction instruction)
     {
+        _currentInstruction = instruction.Value;
+        _hasCurrentInstruction = true;
+
         switch (instruction.Opcode)
         {
             case 0x00: // SPECIAL
@@ -508,6 +516,7 @@ public sealed class R3000A
 
         // Mesmo em execução direta, $zero deve continuar protegido.
         _registers[0] = 0;
+        _hasCurrentInstruction = false;
     }
 
     private void ExecuteCop0(Instruction instruction)
@@ -1372,4 +1381,12 @@ public readonly record struct CpuExceptionInfo(
     ExceptionCode Code,
     uint FaultingPc,
     uint Epc,
-    bool InBranchDelaySlot);
+    bool InBranchDelaySlot,
+    uint? RawInstruction)
+{
+    public uint? BreakCode =>
+        Code == ExceptionCode.Breakpoint &&
+        RawInstruction is uint instruction
+            ? (instruction >> 6) & 0x000F_FFFF
+            : null;
+}

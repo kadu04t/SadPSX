@@ -44,7 +44,31 @@ public sealed class RuntimeDiagnosticsTests
             1ul,
             diagnostics.ExceptionCounts[ExceptionCode.ReservedInstruction]);
         Assert.Equal(ExceptionCode.ReservedInstruction, reported?.Code);
+        Assert.Equal(0xFC00_0000u, reported?.RawInstruction);
         Assert.Single(diagnostics.RecentExceptions);
+    }
+
+    [Fact]
+    public void BreakpointPreservesOpcodeAndImmediateCode()
+    {
+        uint instruction = (0x54321u << 6) | 0x0D;
+        var machine = new PsxMachine();
+        machine.LoadBios(CreateBios(instruction));
+        using var diagnostics = new RuntimeDiagnostics(machine);
+
+        machine.Step();
+
+        CpuExceptionInfo exception = Assert.Single(
+            diagnostics.RecentExceptions);
+        Assert.Equal(ExceptionCode.Breakpoint, exception.Code);
+        Assert.Equal(0xBFC0_0000u, exception.FaultingPc);
+        Assert.Equal(instruction, exception.RawInstruction);
+        Assert.Equal(0x54321u, exception.BreakCode);
+        Assert.Equal(
+            "break    0x54321",
+            Disassembler.Disassemble(
+                new Instruction(exception.RawInstruction!.Value),
+                exception.FaultingPc));
     }
 
     [Fact]

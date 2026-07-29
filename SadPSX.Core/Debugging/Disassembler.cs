@@ -82,7 +82,7 @@ public static class Disassembler
             0x09 when instruction.Rd == 31 => $"jalr     ${Reg(instruction.Rs)}",
             0x09 => $"jalr     ${Reg(instruction.Rd)}, ${Reg(instruction.Rs)}",
             0x0C => "syscall",
-            0x0D => "break",
+            0x0D => DisassembleBreak(instruction),
             0x10 => $"mfhi     ${Reg(instruction.Rd)}",
             0x11 => $"mthi     ${Reg(instruction.Rs)}",
             0x12 => $"mflo     ${Reg(instruction.Rd)}",
@@ -133,6 +133,12 @@ public static class Disassembler
             0x10 when instruction.Function == 0x10 => "rfe",
             _ => Unknown(instruction),
         };
+    }
+
+    private static string DisassembleBreak(Instruction instruction)
+    {
+        uint code = (instruction.Value >> 6) & 0x000F_FFFF;
+        return code == 0 ? "break" : $"break    0x{code:X5}";
     }
 
     private static string DisassembleCop2(Instruction instruction)

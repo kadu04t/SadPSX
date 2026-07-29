@@ -34,13 +34,17 @@ public sealed class ExceptionTests
     {
         var cpu = new R3000A();
         cpu.Reset(0x2000);
+        CpuExceptionInfo? exception = null;
+        cpu.ExceptionOccurred += info => exception = info;
+        uint instruction = (0x12345u << 6) | 0x0D;
 
-        // break
-        cpu.Execute(new Instruction(0x0000_000D));
+        cpu.Execute(new Instruction(instruction));
 
         uint excCode = (cpu.Cop0.Cause >> 2) & 0x1F;
         Assert.Equal(0x09u, excCode); // ExceptionCode.Breakpoint
         Assert.Equal(0x2000u, cpu.Cop0.Epc);
+        Assert.Equal(instruction, exception?.RawInstruction);
+        Assert.Equal(0x12345u, exception?.BreakCode);
     }
 
     [Fact]
