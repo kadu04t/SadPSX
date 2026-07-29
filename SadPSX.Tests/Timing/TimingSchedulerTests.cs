@@ -87,6 +87,65 @@ public sealed class TimingSchedulerTests
         Assert.Equal(3ul, lateDevice.TotalCycles);
     }
 
+    [Fact]
+    public void ScheduledEventRunsAtExactCycleAndSplitsDeviceTicks()
+    {
+        var scheduler = new TimingScheduler();
+        var segments = new List<uint>();
+        scheduler.Register(new SegmentRecordingDevice(segments));
+        ulong observedCycle = 0;
+        scheduler.Schedule(3, () => observedCycle = scheduler.ClockCycles);
+
+        scheduler.Advance(10);
+
+        Assert.Equal(3ul, observedCycle);
+        Assert.Equal([3u, 7u], segments);
+        Assert.Equal(10ul, scheduler.ClockCycles);
+    }
+
+    [Fact]
+    public void EventsAtSameCycleRunInSchedulingOrder()
+    {
+        var scheduler = new TimingScheduler();
+        var order = new List<int>();
+        scheduler.Schedule(5, () => order.Add(1));
+        scheduler.Schedule(5, () => order.Add(2));
+        scheduler.Schedule(5, () => order.Add(3));
+
+        scheduler.Advance(5);
+
+        Assert.Equal([1, 2, 3], order);
+    }
+
+    [Fact]
+    public void CancelledEventDoesNotRun()
+    {
+        var scheduler = new TimingScheduler();
+        bool invoked = false;
+        TimingEvent timingEvent =
+            scheduler.Schedule(2, () => invoked = true);
+
+        Assert.True(timingEvent.Cancel());
+        scheduler.Advance(2);
+
+        Assert.False(invoked);
+        Assert.True(timingEvent.IsCancelled);
+        Assert.Equal(0, scheduler.PendingEventCount);
+    }
+
+    [Fact]
+    public void ResetCancelsPendingEvents()
+    {
+        var scheduler = new TimingScheduler();
+        TimingEvent timingEvent = scheduler.Schedule(4, () => { });
+
+        scheduler.ResetClock();
+
+        Assert.True(timingEvent.IsCancelled);
+        Assert.Equal(0, scheduler.PendingEventCount);
+        Assert.Equal(0ul, scheduler.ClockCycles);
+    }
+
     private sealed class RecordingDevice(
         string name,
         List<string> tickOrder) : IClockedDevice
@@ -107,6 +166,15 @@ public sealed class TimingSchedulerTests
         public void Tick(uint cycles)
         {
             callback();
+        }
+    }
+
+    private sealed class SegmentRecordingDevice(
+        List<uint> segments) : IClockedDevice
+    {
+        public void Tick(uint cycles)
+        {
+            segments.Add(cycles);
         }
     }
 }
