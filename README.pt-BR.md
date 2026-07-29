@@ -25,7 +25,8 @@ O SadPSX já consegue:
 - Executar branch e jump delay slots.
 - Aplicar load delay em loads e `MFC0`.
 - Executar `LWL`, `LWR`, `SWL` e `SWR`.
-- Transferir dados pelo COP2 e executar comandos geométricos essenciais da GTE.
+- Transferir dados pelo COP2 e executar todos os comandos documentados da GTE,
+  com MAC de 44 bits, flags de saturação e divisão UNR.
 - Processar exceções através do COP0.
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
@@ -33,7 +34,9 @@ O SadPSX já consegue:
 - Executar DMA2 temporizado para a GPU e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
 - Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
-- Consultar um controle digital pelo SIO0 e usar teclado ou gamepad SDL3.
+- Consultar controles digitais e analógicos pelo SIO0 e usar teclado ou
+  gamepad SDL3, incluindo configuração DualShock.
+- Usar duas portas SIO0 com memory cards raw de 128 KiB e persistência `.mcr`.
 - Abrir um launcher básico para selecionar BIOS e imagens BIN/CUE.
 - Exibir o progresso POST da BIOS no console de diagnóstico.
 - Detectar overflow, acessos desalinhados e erros de barramento.
@@ -82,9 +85,10 @@ A implementação interpretada do R3000A inclui:
 
 O COP2 implementa `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2` e `SWC2`, incluindo
 load delay nas transferências para a CPU. A GTE possui FIFOs e semântica dos
-registradores de dados/controle, além dos comandos `RTPS`, `RTPT`, `NCLIP`,
-`OP`, `MVMVA`, `SQR`, `AVSZ3`, `AVSZ4`, `NCS`, `NCT`, `NCCS`, `NCCT`,
-`NCDS` e `NCDT`.
+registradores de dados/controle, MAC de 44 bits, flags de overflow, divisão UNR
+e todos os comandos documentados: `RTPS`, `RTPT`, `NCLIP`, `OP`, `DPCS`,
+`INTPL`, `MVMVA`, `NCDS`, `CDP`, `NCDT`, `NCCS`, `CC`, `NCS`, `NCT`, `SQR`,
+`DCPL`, `DPCT`, `AVSZ3`, `AVSZ4`, `GPF`, `GPL` e `NCCT`.
 
 ### COP0
 
@@ -276,13 +280,19 @@ Uma imagem de disco BIN ou CUE pode ser conectada na inicialização:
 
 ```powershell
 dotnet run -c Release --project SadPSX.Frontend -- .\BiosPS1\SCPH1001.BIN `
-  --disc .\GamesPS1\Jogo.cue
+  --disc .\GamesPS1\Jogo.cue `
+  --memory-card .\card1.mcr
 ```
 
 Ao abrir `SadPSX.exe` sem argumentos, uma janela simples permite selecionar uma
 BIOS de 512 KiB, escolher opcionalmente uma imagem `.cue` ou `.bin` e iniciar o
 emulador pelo botão **Start**. Os argumentos de linha de comando continuam
 disponíveis para desenvolvimento e automação.
+
+O primeiro memory card usa por padrão
+`%LOCALAPPDATA%\SadPSX\MemoryCards\card1.mcr`. A opção `--memory-card` seleciona
+outra imagem raw de 128 KiB; caso o arquivo não exista, o frontend cria uma
+imagem formatada.
 
 Quando a imagem possui uma estrutura inicializável, o console mostra o
 executável encontrado em `SYSTEM.CNF`. O relatório `F1` inclui o último comando
@@ -300,7 +310,7 @@ Atalhos de diagnóstico:
 - `F3`: acessos MMIO ainda não implementados.
 - `F4`: exceções recentes da CPU.
 
-A entrada do controle digital usa:
+A entrada dos controles digital e analógico usa:
 
 - Gamepads Xbox, PlayStation e genéricos reconhecidos pelo SDL3, inclusive com
   conexão e remoção durante a execução.
@@ -426,7 +436,8 @@ Os testes cobrem:
 - Loads, stores e load delay.
 - Loads e stores desalinhados em todos os offsets.
 - Exceções e registradores do COP0.
-- Transferências COP2, registradores e comandos geométricos da GTE.
+- Transferências COP2, todos os comandos documentados da GTE, FIFOs,
+  saturação, overflow do MAC e divisão UNR.
 - Proteção entre modo usuário e segmentos do kernel.
 - Contabilização de ciclos e sincronização de dispositivos.
 - Controlador de interrupções e entrega ao COP0.
@@ -439,7 +450,8 @@ Os testes cobrem:
 - SPU com 24 vozes, ADPCM, pitch, ADSR, volume sweep, mistura estéreo e DMA4.
 - Reprodução CD-DA/XA-ADPCM, resampling, matriz de volume, AutoPause e `INT4`.
 - Saída de áudio SDL3 em 44,1 kHz no frontend.
-- SIO0, protocolo do controle digital, IRQ e POST da BIOS.
+- SIO0, controles digitais/analógicos, configuração DualShock, leitura e
+  escrita persistente de memory cards, IRQ e POST da BIOS.
 - Tradução e roteamento do barramento.
 - RAM, scratchpad, BIOS e Expansion Region 1.
 - Disassembler e trace logger.
@@ -476,7 +488,7 @@ SadPSX/
 │   ├── Dma/          # Testes de DMA
 │   ├── Mdec/         # Testes do MDEC e DMA0/1
 │   ├── Gte/          # Testes da GTE e COP2
-│   └── Controllers/  # Testes do SIO0 e controle digital
+│   └── Controllers/  # Testes do SIO0, controles e memory cards
 ├── BiosPS1/          # Dumps locais de BIOS, ignorados pelo Git
 ├── GamesPS1/         # Imagens locais de jogos, ignoradas pelo Git
 ├── docs/
@@ -495,13 +507,15 @@ O SadPSX ainda não possui:
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA do canal PIO.
 - Contenção de barramento, PIO e timing dos canais DMA além do DMA2.
-- Comandos de iluminação/cor restantes e precisão completa da GTE.
+- Verificação em hardware de casos extremos não documentados e latência exata
+  por comando da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.
 - Relatórios periódicos de `Play` e emphasis do XA.
 - Interpolação Gaussiana, reverb e precisão completa dos envelopes da SPU.
 - Timing dos FIFOs e casos extremos de arredondamento do MDEC.
-- Protocolo DualShock, controles analógicos e memory cards.
+- Saída de rumble DualShock, multitaps, controles especiais e formatos de
+  memory card que não sejam raw.
 - Stalls da CPU e contenção precisa de barramento.
 - Implementação completa da instruction cache.
 
@@ -512,9 +526,9 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 ## Próximos passos
 
 Os próximos passos naturais são ampliar os testes de compatibilidade após o
-salto da BIOS para o `PS-X EXE`, refinar FIFO/timing da GPU, completar os
-comandos de cor restantes da GTE e adicionar memory cards. O bloco futuro de
-otimização mantém benchmarks,
+salto da BIOS para o `PS-X EXE`, refinar FIFO/timing da GPU, completar o
+reverb/interpolação da SPU e validar os novos controles e memory cards em mais
+jogos. O bloco futuro de otimização mantém benchmarks,
 execução da CPU em lotes, caminhos rápidos do barramento, scheduler de eventos
 e separação entre diagnóstico normal e trace completo.
 

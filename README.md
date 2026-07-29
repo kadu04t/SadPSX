@@ -19,8 +19,8 @@ SadPSX currently provides:
 
 - An interpreted MIPS R3000A CPU with delay slots, load delays, exceptions,
   COP0, interrupts, and unaligned memory operations.
-- A GTE/COP2 implementation covering the geometry and lighting commands needed
-  by early compatibility tests.
+- A complete documented GTE command set with 44-bit MAC behavior, saturation
+  flags, and hardware-style UNR projection division.
 - A 1024×512 GPU VRAM, GP0 command parser, textured and Gouraud primitives,
   transfers, masking, dithering, and video timing.
 - DMA channels for MDEC, GPU, CD-ROM, SPU, and OTC transfers.
@@ -28,7 +28,10 @@ SadPSX currently provides:
   playback.
 - SPU voices with ADPCM, ADSR, mixing, and SDL3 audio output.
 - MDEC RLE/IDCT decoding and DMA transfers.
-- Digital controller input through keyboard or SDL3-compatible gamepads.
+- Digital and analog controller input through keyboard or SDL3-compatible
+  gamepads, including DualShock configuration commands.
+- Two SIO0 ports with raw 128 KiB memory cards and automatic `.mcr`
+  persistence.
 - A basic launcher for selecting BIOS and BIN/CUE files.
 - An SDL3 video frontend and diagnostic console.
 
@@ -70,9 +73,10 @@ The interpreted R3000A implementation includes:
 
 COP2 implements `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2`, and `SWC2`, including
 load delays for transfers back to the CPU. The GTE provides data and control
-register semantics, FIFOs, and the commands `RTPS`, `RTPT`, `NCLIP`, `OP`,
-`MVMVA`, `SQR`, `AVSZ3`, `AVSZ4`, `NCS`, `NCT`, `NCCS`, `NCCT`, `NCDS`, and
-`NCDT`.
+register semantics, FIFOs, 44-bit MAC overflow flags, UNR division, and all
+documented commands: `RTPS`, `RTPT`, `NCLIP`, `OP`, `DPCS`, `INTPL`, `MVMVA`,
+`NCDS`, `CDP`, `NCDT`, `NCCS`, `CC`, `NCS`, `NCT`, `SQR`, `DCPL`, `DPCT`,
+`AVSZ3`, `AVSZ4`, `GPF`, `GPL`, and `NCCT`.
 
 ### COP0
 
@@ -265,7 +269,8 @@ From source:
 ```powershell
 dotnet run -c Release --project SadPSX.Frontend -- `
   .\BiosPS1\SCPH1001.BIN `
-  --disc .\GamesPS1\Game.cue
+  --disc .\GamesPS1\Game.cue `
+  --memory-card .\card1.mcr
 ```
 
 From the Windows release:
@@ -278,6 +283,11 @@ Double-clicking `SadPSX.exe` without arguments opens a small launcher. Select a
 512 KiB BIOS, optionally select a `.cue` or `.bin` disc image, and press
 **Start**. Command-line arguments remain available for development and
 automation.
+
+The first memory card defaults to
+`%LOCALAPPDATA%\SadPSX\MemoryCards\card1.mcr`. Use `--memory-card` to select
+another raw 128 KiB `.mcr` image. A formatted image is created when the selected
+file does not exist.
 
 Controls:
 
@@ -402,7 +412,8 @@ The tests cover:
 - Delay slots, load delays, multiplication, division, loads, and stores.
 - Unaligned loads and stores at every byte offset.
 - COP0 exceptions, registers, permissions, and interrupt delivery.
-- COP2 transfers, GTE registers, FIFOs, and geometry commands.
+- COP2 transfers, every documented GTE command, FIFOs, saturation, MAC
+  overflow, and UNR division.
 - CPU cycle accounting and device synchronization.
 - Root counters, targets, dividers, synchronization, and IRQ generation.
 - GPU control handshakes, GP0 packets, VRAM transfers, and rasterization.
@@ -412,7 +423,8 @@ The tests cover:
 - SPU voices, ADPCM, pitch, ADSR, volume sweeps, stereo mixing, and DMA4.
 - CD-DA/XA-ADPCM playback, resampling, CD volume matrix, AutoPause, and `INT4`.
 - SDL3 video, audio, gamepad input, and frontend behavior.
-- SIO0 timing, digital controller protocol, IRQ7, and BIOS POST.
+- SIO0 timing, digital/analog controllers, DualShock configuration, memory
+  card read/write persistence, IRQ7, and BIOS POST.
 - Address translation, bus routing, RAM, scratchpad, BIOS, and open bus.
 - Disassembly, tracing, validation reports, and complete MIPS test programs.
 
@@ -433,7 +445,7 @@ SadPSX/
 │   ├── Timers/       # Root counters
 │   ├── Interrupts/   # I_STAT, I_MASK, and IRQ sources
 │   ├── Spu/          # Sound processing, voices, and sound RAM
-│   ├── Controllers/  # SIO0, controllers, and future memory cards
+│   ├── Controllers/  # SIO0, digital/analog pads, and memory cards
 │   ├── Debugging/    # Disassembly, tracing, and validation
 │   └── PsxMachine.cs
 ├── SadPSX.Cli/       # Headless BIOS and disc diagnostic runner
@@ -462,8 +474,10 @@ SadPSX/
 - GPU rasterization, FIFO consumption, and primitive execution timing are not
   pixel- or cycle-perfect.
 - DMA bus contention, PIO transfers, and timing outside DMA2 are incomplete.
-- GTE lighting/color commands and saturation behavior are not complete.
-- Memory cards, DualShock, and analog controller protocols are missing.
+- Some undocumented GTE edge cases and exact per-command latency still need
+  hardware verification.
+- DualShock rumble output, multitaps, specialty controllers, and non-raw memory
+  card formats are not implemented.
 - CD-ROM periodic `Play` reports and XA emphasis are missing.
 - SPU Gaussian interpolation, reverb, and complete envelope accuracy need
   further work.
@@ -476,15 +490,13 @@ physical PAL/NTSC clock differences.
 
 ## Roadmap
 
-The planned accuracy blocks are:
+The next accuracy blocks are:
 
 1. Precise GPU rasterization, FIFO behavior, and DMA interaction.
-2. Complete GTE commands, flags, saturation, and edge cases.
-3. Memory cards, DualShock, and controller configuration.
-4. SPU Gaussian interpolation, reverb, and envelope edge cases.
-5. Precise MDEC FIFO timing and hardware rounding edge cases.
-6. Central event scheduling, bus contention, and timing accuracy.
-7. Compatibility tests, regression diagnostics, and performance optimization.
+2. SPU Gaussian interpolation, reverb, and envelope edge cases.
+3. Precise MDEC FIFO timing and hardware rounding edge cases.
+4. Central event scheduling, bus contention, and timing accuracy.
+5. Compatibility tests, regression diagnostics, and performance optimization.
 
 ## Project Philosophy
 
