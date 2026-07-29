@@ -109,4 +109,39 @@ public sealed class MdecTests
         Assert.Equal(192, bus.Mdec.OutputWordCount);
         Assert.Equal(0x9C80_7B9Cu, bus.Read32(MdecDevice.DataAddress));
     }
+
+    [Fact]
+    public void DecodeUsesTheUploadedScaleTable()
+    {
+        var bus = new Bus();
+
+        bus.Write32(MdecDevice.DataAddress, 0x6000_0000);
+        for (int word = 0; word < 32; word++)
+            bus.Write32(MdecDevice.DataAddress, 0);
+
+        bus.Write32(MdecDevice.DataAddress, 0x2800_0001);
+        bus.Write32(MdecDevice.DataAddress, 0xFE00_0040);
+
+        Assert.Equal(16, bus.Mdec.OutputWordCount);
+        for (int word = 0; word < 16; word++)
+            Assert.Equal(0x8080_8080u, bus.Read32(MdecDevice.DataAddress));
+    }
+
+    [Fact]
+    public void StatusTracksColorOutputBlockUntilTheFifoDrains()
+    {
+        var bus = new Bus();
+
+        bus.Write32(MdecDevice.DataAddress, 0x3800_0006);
+        for (int block = 0; block < 6; block++)
+            bus.Write32(MdecDevice.DataAddress, 0xFE00_0000);
+
+        Assert.Equal(0u, (bus.Mdec.Status >> 16) & 7);
+        for (int word = 0; word < 32; word++)
+            bus.Mdec.ReadDmaWord();
+        Assert.Equal(1u, (bus.Mdec.Status >> 16) & 7);
+        while (bus.Mdec.OutputWordCount > 0)
+            bus.Mdec.ReadDmaWord();
+        Assert.Equal(4u, (bus.Mdec.Status >> 16) & 7);
+    }
 }

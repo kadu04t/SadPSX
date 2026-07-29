@@ -23,17 +23,19 @@ public sealed class Mdec : IMmioDevice
         21, 34, 37, 47, 50, 56, 59, 61,
         35, 36, 48, 49, 57, 58, 62, 63,
     ];
-
-    private static readonly double[,] Cosine = CreateCosineTable();
+    private static readonly int[] ReverseZigZag = CreateReverseZigZag();
 
     private readonly byte[] _luminanceQuantTable = new byte[64];
     private readonly byte[] _colorQuantTable = new byte[64];
-    private readonly short[] _scaleTable = new short[64];
+    private readonly short[] _scaleTable = CreateDefaultScaleTable();
     private readonly List<uint> _parameters = new();
     private readonly Queue<uint> _output = new();
 
     private uint _command;
     private int _wordsRemaining;
+    private int _currentBlock;
+    private int _outputWordsPerBlock;
+    private int _outputWordsRead;
     private int _outputDepth;
     private bool _outputSigned;
     private bool _outputBit15;
@@ -62,7 +64,7 @@ public sealed class Mdec : IMmioDevice
                 status |= 1u << 24;
             if (_outputBit15)
                 status |= 1u << 23;
-            status |= 4u << 16;
+            status |= (uint)_currentBlock << 16;
             if (_wordsRemaining > 0)
                 status |= (uint)(_wordsRemaining - 1) & 0xFFFF;
 
@@ -78,6 +80,9 @@ public sealed class Mdec : IMmioDevice
     {
         _command = 0;
         _wordsRemaining = 0;
+        _currentBlock = 4;
+        _outputWordsPerBlock = 0;
+        _outputWordsRead = 0;
         _outputDepth = 0;
         _outputSigned = false;
         _outputBit15 = false;
@@ -165,8 +170,19 @@ public sealed class Mdec : IMmioDevice
 
     public void WriteDmaWord(uint value) => WriteCommandOrParameter(value);
 
-    public uint ReadDmaWord() =>
-        _output.TryDequeue(out uint value) ? value : 0;
+    public uint ReadDmaWord()
+    {
+        if (!_output.TryDequeue(out uint value))
+            return 0;
+
+        _outputWordsRead++;
+        if (_output.Count == 0)
+            _currentBlock = 4;
+        else if (_outputWordsPerBlock > 0)
+            _currentBlock =
+                _outputWordsRead / _outputWordsPerBlock & 3;
+        return value;
+    }
 
     public byte[] GetQuantTable(bool color) =>
         (color ? _colorQuantTable : _luminanceQuantTable).ToArray();
@@ -263,6 +279,13 @@ public sealed class Mdec : IMmioDevice
         int depth = _outputDepth;
         bool signed = _outputSigned;
         bool setBit15 = _outputBit15;
+        _outputWordsRead = 0;
+        _outputWordsPerBlock = depth switch
+        {
+            2 => 48,
+            3 => 32,
+            _ => 0,
+        };
 
         while (dataIndex < data.Length)
         {
@@ -273,6 +296,7 @@ public sealed class Mdec : IMmioDevice
 
             if (depth < 2)
             {
+                _currentBlock = 4;
                 int[] luminance = DecodeBlock(
                     data,
                     ref dataIndex,
@@ -281,20 +305,27 @@ public sealed class Mdec : IMmioDevice
                 continue;
             }
 
+            _currentBlock = 4;
             int[] cr = DecodeBlock(data, ref dataIndex, _colorQuantTable);
+            _currentBlock = 5;
             int[] cb = DecodeBlock(data, ref dataIndex, _colorQuantTable);
             int[][] luminanceBlocks = new int[4][];
             for (int block = 0; block < luminanceBlocks.Length; block++)
+            {
+                _currentBlock = block;
                 luminanceBlocks[block] = DecodeBlock(
                     data,
                     ref dataIndex,
                     _luminanceQuantTable);
+            }
 
             WriteColor(cr, cb, luminanceBlocks, depth, signed, setBit15);
         }
+
+        _currentBlock = depth < 2 ? 4 : 0;
     }
 
-    private static int[] DecodeBlock(
+    private int[] DecodeBlock(
         ushort[] data,
         ref int dataIndex,
         byte[] quantTable)
@@ -309,9 +340,12 @@ public sealed class Mdec : IMmioDevice
 
         int quantScale = first >> 10;
         int firstValue = SignExtend10(first);
-        coefficients[0] = quantScale == 0
-            ? firstValue * 2
-            : firstValue * quantTable[0];
+        coefficients[0] = Math.Clamp(
+            quantScale == 0
+                ? firstValue * 2
+                : firstValue * quantTable[0],
+            -0x400,
+            0x3FF);
 
         int position = 0;
         while (dataIndex < data.Length)
@@ -328,7 +362,10 @@ public sealed class Mdec : IMmioDevice
             int coefficient = quantScale == 0
                 ? value * 2
                 : (value * quantTable[position] * quantScale + 4) / 8;
-            coefficients[ZigZag[position]] = Math.Clamp(
+            int coefficientIndex = quantScale == 0
+                ? position
+                : ReverseZigZag[position];
+            coefficients[coefficientIndex] = Math.Clamp(
                 coefficient,
                 -0x400,
                 0x3FF);
@@ -337,36 +374,32 @@ public sealed class Mdec : IMmioDevice
         return InverseDiscreteCosineTransform(coefficients);
     }
 
-    private static int[] InverseDiscreteCosineTransform(int[] coefficients)
+    private int[] InverseDiscreteCosineTransform(int[] coefficients)
     {
-        int[] result = new int[64];
-        for (int y = 0; y < 8; y++)
+        int[] source = coefficients;
+        int[] destination = new int[64];
+        for (int pass = 0; pass < 2; pass++)
         {
             for (int x = 0; x < 8; x++)
             {
-                double sum = 0;
-                for (int vertical = 0; vertical < 8; vertical++)
+                for (int y = 0; y < 8; y++)
                 {
-                    double verticalScale =
-                        vertical == 0 ? Math.Sqrt(0.5) : 1;
-                    for (int horizontal = 0; horizontal < 8; horizontal++)
+                    long sum = 0;
+                    for (int z = 0; z < 8; z++)
                     {
-                        double horizontalScale =
-                            horizontal == 0 ? Math.Sqrt(0.5) : 1;
-                        sum += horizontalScale *
-                               verticalScale *
-                               coefficients[vertical * 8 + horizontal] *
-                               Cosine[x, horizontal] *
-                               Cosine[y, vertical];
+                        sum += (long)source[y + z * 8] *
+                               (_scaleTable[x + z * 8] >> 3);
                     }
-                }
 
-                result[y * 8 + x] =
-                    Math.Clamp((int)Math.Round(sum / 4), -128, 127);
+                    destination[x + y * 8] =
+                        (int)((sum + 0xFFF) >> 13);
+                }
             }
+
+            (source, destination) = (destination, source);
         }
 
-        return result;
+        return source;
     }
 
     private void WriteMonochrome(int[] luminance, int depth, bool signed)
@@ -461,18 +494,15 @@ public sealed class Mdec : IMmioDevice
         int cr,
         bool signed)
     {
-        int red = Math.Clamp(
-            (int)Math.Round(luminance + 1.402 * cr),
-            -128,
-            127);
+        luminance = SignExtend9(luminance);
+        cb = SignExtend9(cb);
+        cr = SignExtend9(cr);
+        int red = Math.Clamp(luminance + ((1436 * cr) >> 10), -128, 127);
         int green = Math.Clamp(
-            (int)Math.Round(luminance - 0.3437 * cb - 0.7143 * cr),
+            luminance - ((352 * cb + 731 * cr) >> 10),
             -128,
             127);
-        int blue = Math.Clamp(
-            (int)Math.Round(luminance + 1.772 * cb),
-            -128,
-            127);
+        int blue = Math.Clamp(luminance + ((1815 * cb) >> 10), -128, 127);
         return (
             ConvertSample(red, signed),
             ConvertSample(green, signed),
@@ -481,8 +511,20 @@ public sealed class Mdec : IMmioDevice
 
     private static byte ConvertSample(int value, bool signed) =>
         signed
-            ? unchecked((byte)(sbyte)value)
-            : (byte)(value + 128);
+            ? unchecked((byte)(sbyte)Math.Clamp(
+                SignExtend9(value),
+                -128,
+                127))
+            : (byte)(Math.Clamp(
+                SignExtend9(value),
+                -128,
+                127) ^ 0x80);
+
+    private static int SignExtend9(int value)
+    {
+        value &= 0x1FF;
+        return (value & 0x100) != 0 ? value - 0x200 : value;
+    }
 
     private static int SignExtend10(ushort value)
     {
@@ -517,18 +559,27 @@ public sealed class Mdec : IMmioDevice
         return values;
     }
 
-    private static double[,] CreateCosineTable()
+    private static short[] CreateDefaultScaleTable()
     {
-        var table = new double[8, 8];
-        for (int sample = 0; sample < 8; sample++)
-        {
-            for (int frequency = 0; frequency < 8; frequency++)
-            {
-                table[sample, frequency] = Math.Cos(
-                    (2 * sample + 1) * frequency * Math.PI / 16);
-            }
-        }
+        ushort[] values =
+        [
+            0x5A82, 0x5A82, 0x5A82, 0x5A82, 0x5A82, 0x5A82, 0x5A82, 0x5A82,
+            0x7D8A, 0x6A6D, 0x471C, 0x18F8, 0xE707, 0xB8E3, 0x9592, 0x8275,
+            0x7641, 0x30FB, 0xCF04, 0x89BE, 0x89BE, 0xCF04, 0x30FB, 0x7641,
+            0x6A6D, 0xE707, 0x8275, 0xB8E3, 0x471C, 0x7D8A, 0x18F8, 0x9592,
+            0x5A82, 0xA57D, 0xA57D, 0x5A82, 0x5A82, 0xA57D, 0xA57D, 0x5A82,
+            0x471C, 0x8275, 0x18F8, 0x6A6D, 0x9592, 0xE707, 0x7D8A, 0xB8E3,
+            0x30FB, 0x89BE, 0x7641, 0xCF04, 0xCF04, 0x7641, 0x89BE, 0x30FB,
+            0x18F8, 0xB8E3, 0x6A6D, 0x8275, 0x7D8A, 0x9592, 0x471C, 0xE707,
+        ];
+        return values.Select(value => unchecked((short)value)).ToArray();
+    }
 
-        return table;
+    private static int[] CreateReverseZigZag()
+    {
+        int[] reverse = new int[ZigZag.Length];
+        for (int index = 0; index < ZigZag.Length; index++)
+            reverse[ZigZag[index]] = index;
+        return reverse;
     }
 }
