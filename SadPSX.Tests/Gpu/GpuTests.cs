@@ -124,4 +124,23 @@ public sealed class GpuTests
             bus.Mmio.AccessSummaries,
             summary => summary.RegisterName == "GP1/GPUSTAT");
     }
+
+    [Fact]
+    public void DmaFifoAppliesBackpressureUntilGpuConsumesAWord()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+
+        for (int word = 0; word < 16; word++)
+            Assert.True(gpu.TryWriteDmaWord(0));
+
+        Assert.False(gpu.TryWriteDmaWord(0));
+        Assert.Equal(16, gpu.DmaFifoCount);
+        Assert.Equal(0u, gpu.Status & (1u << 28));
+
+        gpu.Tick(1);
+
+        Assert.Equal(15, gpu.DmaFifoCount);
+        Assert.NotEqual(0u, gpu.Status & (1u << 28));
+    }
 }

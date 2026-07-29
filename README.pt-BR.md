@@ -132,6 +132,10 @@ bus error e IRQ3. Os caminhos funcionais atuais são:
 - DMA2 incremental em modo manual ou por blocos entre RAM e GPU, respeitando
   direção, DREQ, estado ocupado e atualização de `MADR`/`BCR`.
 - DMA2 linked-list processado por nós para envio de listas de comandos GP0.
+- Arbitragem por prioridade do DPCR, incluindo desempate pelo número do canal.
+- Backpressure do DMA2 por um FIFO de 16 words na GPU.
+- Chopping do DMA2 em burst com janelas programáveis de DMA/CPU e pausa de
+  burst forçado.
 - DMA3 por blocos do FIFO do CD-ROM para a RAM.
 - DMA4 por blocos entre RAM e SPU.
 - DMA6/OTC para criação reversa da ordering table.
@@ -165,7 +169,7 @@ offset de desenho, texture window, flips de sprites, máscara e
 semitransparência por texel. Polígonos usam a regra top-left e dithering 4x4
 para Gouraud e modulação. Primitivas que excedem os limites físicos são
 descartadas, e `Texpage` e os bits de prontidão de `GPUSTAT` acompanham o
-estado do parser usado pelo DMA2.
+estado do parser e do FIFO DMA de 16 words.
 
 O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
 scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
@@ -226,9 +230,12 @@ Expansion 1 e BIOS.
 Dispositivos implementam `IClockedDevice` e são registrados no
 `TimingScheduler` central. Após cada instrução, a `PsxMachine` avança um
 relógio absoluto do sistema e repassa os ciclos decorridos aos dispositivos em
-ordem determinística de registro. O timing de vídeo usa acumuladores inteiros
-para converter clocks da CPU em clocks NTSC/PAL sem depender de ponto
-flutuante. Este modelo ainda não representa contenção de barramento,
+ordem determinística de registro. Dispositivos podem agendar callbacks
+canceláveis em ciclos futuros absolutos; o scheduler divide o tempo nessas
+fronteiras para que todos observem o evento no mesmo ciclo do sistema. O timing
+de vídeo usa acumuladores inteiros para converter clocks da CPU em clocks
+NTSC/PAL sem depender de ponto flutuante. Este modelo ainda não representa
+contenção de barramento,
 instruction cache completa ou timings internos de todas as instruções e
 transferências.
 
@@ -486,8 +493,7 @@ O SadPSX ainda não possui:
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA do canal PIO.
-- Chopping, arbitragem entre canais, contenção de barramento e timing dos
-  canais DMA além do DMA2.
+- Contenção de barramento, PIO e timing dos canais DMA além do DMA2.
 - Comandos de iluminação/cor restantes e precisão completa da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
   imagens comerciais.
@@ -496,7 +502,7 @@ O SadPSX ainda não possui:
   envelopes da SPU.
 - Precisão bit a bit da IDCT e temporização dos FIFOs do MDEC.
 - Protocolo DualShock, controles analógicos e memory cards.
-- Temporização precisa por componente e contenção de barramento.
+- Stalls da CPU e contenção precisa de barramento.
 - Implementação completa da instruction cache.
 
 Os demais periféricos MMIO ainda são stubs. O timing de vídeo cobre os sinais

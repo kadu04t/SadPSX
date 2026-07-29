@@ -9,12 +9,18 @@ The project follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Central timing scheduler with deterministic device advancement.
+- Cancellable central timing events dispatched at exact system-cycle
+  boundaries.
 - SPU noise generation, pitch modulation, capture buffers, and IRQ9.
+- GPU DMA FIFO with backpressure, DPCR priority arbitration, and burst
+  chopping.
 
 ### Changed
 
 - SPU voices now use fractional sample interpolation and more accurate
   exponential ADSR attack timing.
+- GPU DMA words are consumed on GPU clock ticks instead of executing
+  immediately when written by DMA2.
 
 ## [0.0.1-beta.1] - 2026-07-27
 

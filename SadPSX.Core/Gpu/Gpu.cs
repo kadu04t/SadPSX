@@ -3,7 +3,7 @@ using SadPSX.Core.Interrupts;
 
 namespace SadPSX.Core.Gpu;
 
-public sealed partial class Gpu : IMmioDevice
+public sealed partial class Gpu : IMmioDevice, IClockedDevice
 {
     public const uint Gp0Address = 0x1F80_1810;
     public const uint GpuStatusAddress = 0x1F80_1814;
@@ -19,6 +19,7 @@ public sealed partial class Gpu : IMmioDevice
 
     private readonly InterruptController _interruptController;
     private readonly uint[] _internalRegisters = new uint[8];
+    private readonly Queue<uint> _dmaFifo = new(16);
 
     private uint _status;
     private uint _gpuRead;
@@ -43,6 +44,7 @@ public sealed partial class Gpu : IMmioDevice
     public ulong Gp0CommandCount { get; private set; }
 
     public ulong Gp1CommandCount { get; private set; }
+    public int DmaFifoCount => _dmaFifo.Count;
 
     public uint DisplayVramStart { get; private set; }
 
@@ -93,6 +95,29 @@ public sealed partial class Gpu : IMmioDevice
         DisplayVramStart = 0;
         HorizontalDisplayRange = 0x00C6_0200;
         VerticalDisplayRange = 0x0003_C010;
+    }
+
+    public void Tick(uint cycles)
+    {
+        for (uint cycle = 0;
+             cycle < cycles && _dmaFifo.TryDequeue(out uint value);
+             cycle++)
+        {
+            ExecuteGp0(value);
+        }
+
+        UpdateGp0ReadyStatus();
+    }
+
+    internal bool TryWriteDmaWord(uint value)
+    {
+        const int fifoCapacity = 16;
+        if (_dmaFifo.Count >= fifoCapacity)
+            return false;
+
+        _dmaFifo.Enqueue(value);
+        UpdateGp0ReadyStatus();
+        return true;
     }
 
     public bool Handles(uint address)
@@ -291,7 +316,7 @@ public sealed partial class Gpu : IMmioDevice
         bool requested = direction switch
         {
             0 => false,
-            1 => true,
+            1 => _dmaFifo.Count < 16,
             2 => (_status & ReadyForDmaBlockBit) != 0,
             3 => (_status & ReadyForVramReadBit) != 0,
             _ => false,

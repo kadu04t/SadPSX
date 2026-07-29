@@ -148,6 +148,7 @@ public sealed class PsxMachine
         Timing.Register(Bus.CdRom);
         Timing.Register(Bus.Spu);
         Timing.Register(Bus.Sio0);
+        Timing.Register(Bus.Gpu);
         Timing.Register(Bus.Dma);
     }
 }

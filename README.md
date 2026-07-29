@@ -119,6 +119,11 @@ error, and IRQ3. Functional paths currently include:
 - Incremental DMA2 manual and block transfers between RAM and GPU, respecting
   direction, DREQ, busy state, and `MADR`/`BCR` updates.
 - Incremental DMA2 linked-list processing for GP0 command lists.
+- DPCR priority arbitration, including the documented channel-number tie
+  breaker.
+- DMA2 backpressure through a 16-word GPU FIFO.
+- Burst-mode DMA2 chopping with programmable DMA/CPU windows and forced-burst
+  pause behavior.
 - DMA3 block transfers from the CD-ROM FIFO to RAM.
 - DMA4 block transfers between RAM and SPU.
 - DMA6/OTC reverse ordering-table generation.
@@ -161,7 +166,8 @@ Implemented rendering paths include:
 - Per-pixel masking and texture transparency.
 - Top-left polygon fill rules and 4×4 dithering for Gouraud shading and
   modulation.
-- Physical primitive-size rejection and GPU ready bits coordinated with DMA2.
+- Physical primitive-size rejection and GPU ready bits coordinated with the
+  16-word DMA FIFO.
 
 The video generator converts CPU clocks into the GPU clock domain, advances
 NTSC or PAL scanlines, respects GP1 display ranges, updates the even/odd field
@@ -222,8 +228,11 @@ uncached RAM, scratchpad, MMIO, Expansion 1, and BIOS accesses.
 Devices implement `IClockedDevice` and are registered with the central
 `TimingScheduler`. After every instruction, `PsxMachine` advances one absolute
 system clock and dispatches the elapsed cycles to devices in deterministic
-registration order. Video timing uses integer accumulators to convert CPU
-clocks into NTSC or PAL clocks without floating-point drift.
+registration order. Devices can schedule cancellable callbacks at absolute
+future boundaries; the scheduler splits elapsed time at those boundaries so
+all devices observe the event at the same system cycle. Video timing uses
+integer accumulators to convert CPU clocks into NTSC or PAL clocks without
+floating-point drift.
 
 The model does not yet cover complete bus contention, instruction cache
 behavior, or accurate internal timing for every instruction and transfer.
@@ -447,17 +456,16 @@ SadPSX/
 
 - No complete settings interface, persistent configuration, or game library.
 - No speed synchronization or dedicated CPU thread.
-- GPU rasterization and DMA/FIFO timing are not pixel- or cycle-perfect.
-- DMA chopping, channel arbitration, bus contention, PIO transfers, and timing
-  outside DMA2 are incomplete.
+- GPU rasterization, FIFO consumption, and primitive execution timing are not
+  pixel- or cycle-perfect.
+- DMA bus contention, PIO transfers, and timing outside DMA2 are incomplete.
 - GTE lighting/color commands and saturation behavior are not complete.
 - Memory cards, DualShock, and analog controller protocols are missing.
 - CD-ROM periodic `Play` reports, volume matrix, and XA-ADPCM are missing.
 - SPU Gaussian interpolation, reverb, volume sweeps, and complete envelope
   accuracy need further work.
 - MDEC IDCT and FIFO timing need additional precision.
-- Central timing, bus contention, and instruction cache behavior are
-  approximate.
+- Bus contention, CPU stalls, and instruction cache behavior are approximate.
 
 Other MMIO peripherals remain stubbed. Video timing covers the signals needed
 by the BIOS and timers but approximates interlacing, half scanlines, and

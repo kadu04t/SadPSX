@@ -56,6 +56,7 @@ public sealed class DmaControllerTests
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
         bus.Dma.Tick(2);
+        bus.Gpu.Tick(2);
 
         Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
         Assert.Equal(0xE600_0003u, bus.Gpu.LastGp0Command);
@@ -78,6 +79,7 @@ public sealed class DmaControllerTests
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
         bus.Dma.Tick(4);
+        bus.Gpu.Tick(4);
 
         Assert.Equal(0x1234u, bus.Gpu.Vram.ReadPixel(11, 12));
         Assert.Equal(0x4321u, bus.Gpu.Vram.ReadPixel(12, 12));
@@ -96,6 +98,7 @@ public sealed class DmaControllerTests
 
         bus.Write32(ChannelRegister(2, 8), 0x0100_0401);
         bus.Dma.Tick(3);
+        bus.Gpu.Tick(2);
 
         Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
         Assert.Equal(0x0080_0000u, bus.Dma.GetChannel(2).BaseAddress);
@@ -159,12 +162,17 @@ public sealed class DmaControllerTests
         bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
         bus.Dma.Tick(1);
 
-        Assert.Equal(1ul, bus.Gpu.Gp0CommandCount);
+        Assert.Equal(1, bus.Gpu.DmaFifoCount);
+        Assert.Equal(0ul, bus.Gpu.Gp0CommandCount);
         Assert.NotEqual(
             0u,
             bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
 
+        bus.Gpu.Tick(1);
+        Assert.Equal(1ul, bus.Gpu.Gp0CommandCount);
+
         bus.Dma.Tick(1);
+        bus.Gpu.Tick(1);
 
         Assert.Equal(2ul, bus.Gpu.Gp0CommandCount);
         Assert.Equal(
@@ -206,6 +214,145 @@ public sealed class DmaControllerTests
         Assert.NotEqual(0u, interrupt & (1u << 31));
     }
 
+    [Fact]
+    public void GpuDmaWaitsWhenFifoIsFullAndResumesAfterConsumption()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        for (uint word = 0; word < 17; word++)
+            bus.Ram.Write32(0x100 + word * 4, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0011);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        bus.Dma.Tick(16);
+        bus.Dma.Tick(1);
+
+        Assert.Equal(16, bus.Gpu.DmaFifoCount);
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+
+        bus.Gpu.Tick(1);
+        bus.Dma.Tick(1);
+
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+        Assert.Equal(16, bus.Gpu.DmaFifoCount);
+
+        bus.Gpu.Tick(16);
+
+        Assert.Equal(17ul, bus.Gpu.Gp0CommandCount);
+    }
+
+    [Fact]
+    public void GpuBurstChoppingAlternatesDmaAndCpuWindows()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        for (uint word = 0; word < 4; word++)
+            bus.Ram.Write32(0x100 + word * 4, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 4);
+        bus.Write32(ChannelRegister(2, 8), 0x1100_0101);
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(1, bus.Gpu.DmaFifoCount);
+        Assert.Equal(0x104u, bus.Dma.GetChannel(2).BaseAddress);
+        Assert.Equal(3u, bus.Dma.GetChannel(2).BlockControl & 0xFFFF);
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(1, bus.Gpu.DmaFifoCount);
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(2, bus.Gpu.DmaFifoCount);
+        Assert.Equal(0x108u, bus.Dma.GetChannel(2).BaseAddress);
+        Assert.Equal(2u, bus.Dma.GetChannel(2).BlockControl & 0xFFFF);
+    }
+
+    [Fact]
+    public void ChoppingInSliceModeKeepsGpuDmaHalted()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Ram.Write32(0x100, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0001);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0301);
+
+        bus.Dma.Tick(100);
+
+        Assert.Equal(0, bus.Gpu.DmaFifoCount);
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
+    public void ForcedBurstPauseBitStopsAndResumesGpuDma()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Ram.Write32(0x100, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 1);
+        bus.Write32(ChannelRegister(2, 8), 0x3100_0001);
+
+        bus.Dma.Tick(1);
+
+        Assert.Equal(0, bus.Gpu.DmaFifoCount);
+
+        bus.Write32(ChannelRegister(2, 8), 0x1100_0001);
+        bus.Dma.Tick(1);
+
+        Assert.Equal(1, bus.Gpu.DmaFifoCount);
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
+    public void DpcrPrioritySelectsGpuBeforeLowerPriorityOtc()
+    {
+        var bus = new Bus();
+        ConfigurePendingGpuAndOtc(bus);
+        EnableChannelsWithPriorities(
+            bus,
+            gpuPriority: 0,
+            otcPriority: 7);
+
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(6).ChannelControl & (1u << 24));
+        Assert.Equal(0ul, bus.Dma.CompletedTransfers);
+    }
+
+    [Fact]
+    public void DpcrPriorityCompletesOtcBeforeLowerPriorityGpu()
+    {
+        var bus = new Bus();
+        ConfigurePendingGpuAndOtc(bus);
+        EnableChannelsWithPriorities(
+            bus,
+            gpuPriority: 7,
+            otcPriority: 0);
+
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(6).ChannelControl & (1u << 24));
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+        Assert.Equal(1ul, bus.Dma.CompletedTransfers);
+        Assert.Equal(0x00FF_FFFFu, bus.Ram.Read32(0x200));
+    }
+
     private static uint ChannelRegister(int channel, uint offset) =>
         DmaController.ChannelBaseAddress + (uint)channel * 0x10 + offset;
 
@@ -215,5 +362,29 @@ public sealed class DmaControllerTests
         bus.Write32(
             DmaController.ControlAddress,
             bus.Dma.Control | enableBit);
+    }
+
+    private static void ConfigurePendingGpuAndOtc(Bus bus)
+    {
+        bus.Ram.Write32(0x100, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+        bus.Write32(ChannelRegister(2, 4), 1);
+        bus.Write32(ChannelRegister(2, 8), 0x1100_0001);
+
+        bus.Write32(ChannelRegister(6, 0), 0x200);
+        bus.Write32(ChannelRegister(6, 4), 1);
+        bus.Write32(ChannelRegister(6, 8), 0x1100_0002);
+    }
+
+    private static void EnableChannelsWithPriorities(
+        Bus bus,
+        uint gpuPriority,
+        uint otcPriority)
+    {
+        uint control = bus.Dma.Control;
+        control &= ~((0xFu << 8) | (0xFu << 24));
+        control |= ((gpuPriority | 8) << 8) |
+                   ((otcPriority | 8) << 24);
+        bus.Write32(DmaController.ControlAddress, control);
     }
 }

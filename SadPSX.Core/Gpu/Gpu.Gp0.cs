@@ -358,16 +358,24 @@ public sealed partial class Gpu
 
     private void FinishGp0Word()
     {
+        UpdateGp0ReadyStatus();
+    }
+
+    private void UpdateGp0ReadyStatus()
+    {
         bool collectingPacket = _gp0Packet.Count > 0;
-        if (!collectingPacket && !_cpuToVramActive)
+        if (_dmaFifo.Count < 16 &&
+            !collectingPacket &&
+            !_cpuToVramActive)
             _status |= ReadyForCommandBit;
         else
             _status &= ~ReadyForCommandBit;
 
         bool acceptsDmaBlock =
-            _cpuToVramActive ||
-            !collectingPacket ||
-            !IsPolygonOrLinePacket(_gp0Packet[0]);
+            _dmaFifo.Count < 16 &&
+            (_cpuToVramActive ||
+             !collectingPacket ||
+             !IsPolygonOrLinePacket(_gp0Packet[0]));
         if (acceptsDmaBlock)
             _status |= ReadyForDmaBlockBit;
         else
@@ -391,6 +399,7 @@ public sealed partial class Gpu
 
     private void ResetGp0CommandBuffer()
     {
+        _dmaFifo.Clear();
         ResetPacketCollection();
         _cpuToVramActive = false;
         _cpuToVramPixelsRemaining = 0;

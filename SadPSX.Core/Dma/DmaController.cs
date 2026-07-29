@@ -111,22 +111,43 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
     public void Tick(uint cycles)
     {
-        if (_gpuTransfer is null)
+        uint cyclesRemaining = cycles;
+        while (cyclesRemaining > 0)
         {
-            TryStartChannel(GpuChannel);
+            TryStartPendingChannels();
             if (_gpuTransfer is null)
                 return;
-        }
 
-        for (uint cycle = 0;
-             cycle < cycles && _gpuTransfer is not null;
-             cycle++)
-        {
-            bool transferred = _gpuTransfer.LinkedList
+            GpuTransferState transfer = _gpuTransfer;
+            if (transfer.Halted)
+                return;
+
+            if (transfer.CpuWindowCyclesRemaining > 0)
+            {
+                uint elapsed = Math.Min(
+                    cyclesRemaining,
+                    transfer.CpuWindowCyclesRemaining);
+                transfer.CpuWindowCyclesRemaining -= elapsed;
+                cyclesRemaining -= elapsed;
+                continue;
+            }
+
+            ChannelState channel = _channels[GpuChannel];
+            if (transfer.Forced &&
+                (channel.ChannelControl & (1u << 29)) != 0)
+            {
+                return;
+            }
+
+            bool transferred = transfer.LinkedList
                 ? TickGpuLinkedList()
                 : TickGpuBlock();
             if (!transferred)
-                break;
+                return;
+
+            cyclesRemaining--;
+            if (ReferenceEquals(_gpuTransfer, transfer))
+                ApplyGpuChopping(transfer);
         }
     }
 
@@ -288,7 +309,12 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 uint current = ComposeChannelControl(channel, state);
                 uint merged = Merge(current, value, writeMask);
                 state.ChannelControl = NormalizeChannelControl(channel, merged);
-                TryStartChannel(channel);
+                if (channel == GpuChannel &&
+                    (state.ChannelControl & BusyBit) == 0)
+                {
+                    _gpuTransfer = null;
+                }
+                TryStartPendingChannels();
                 break;
 
             default:
@@ -312,12 +338,21 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
     private void TryStartPendingChannels()
     {
-        for (int channel = 0; channel < _channels.Length; channel++)
+        while (_gpuTransfer is null)
+        {
+            int channel = GetHighestPriorityPendingChannel();
+            if (channel < 0)
+                return;
+
             TryStartChannel(channel);
+        }
     }
 
     private void TryStartChannel(int channel)
     {
+        if (_gpuTransfer is not null)
+            return;
+
         ChannelState state = _channels[channel];
         uint channelControl = ComposeChannelControl(channel, state);
 
@@ -325,6 +360,13 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             return;
 
         uint synchronizationMode = (channelControl >> 9) & 3;
+        if (synchronizationMode == 3)
+        {
+            SignalBusError();
+            CompleteChannel(channel);
+            return;
+        }
+
         if (synchronizationMode == 0 &&
             (channelControl & TriggerBit) == 0)
         {
@@ -364,7 +406,47 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 TransferOtc(state, synchronizationMode);
                 CompleteChannel(channel);
                 break;
+
+            default:
+                SignalBusError();
+                CompleteChannel(channel);
+                break;
         }
+    }
+
+    private int GetHighestPriorityPendingChannel()
+    {
+        int selectedChannel = -1;
+        int selectedPriority = int.MaxValue;
+
+        for (int channel = 0; channel < _channels.Length; channel++)
+        {
+            if (!IsChannelPending(channel))
+                continue;
+
+            int priority = (int)((_control >> (channel * 4)) & 7);
+            if (priority < selectedPriority ||
+                (priority == selectedPriority &&
+                 channel > selectedChannel))
+            {
+                selectedChannel = channel;
+                selectedPriority = priority;
+            }
+        }
+
+        return selectedChannel;
+    }
+
+    private bool IsChannelPending(int channel)
+    {
+        uint channelControl =
+            ComposeChannelControl(channel, _channels[channel]);
+        if ((channelControl & BusyBit) == 0 || !IsChannelEnabled(channel))
+            return false;
+
+        uint synchronizationMode = (channelControl >> 9) & 3;
+        return synchronizationMode != 0 ||
+               (channelControl & TriggerBit) != 0;
     }
 
     private void TransferMdecInput(
@@ -495,6 +577,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             if (!fromRam)
             {
                 SignalBusError();
+                CompleteChannel(GpuChannel);
                 return;
             }
 
@@ -530,7 +613,16 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             BlocksRemaining = blockCount,
             Forced = synchronizationMode == 0 &&
                      (channelControl & TriggerBit) != 0,
+            Halted = synchronizationMode == 1 &&
+                     (channelControl & (1u << 8)) != 0,
+            ChoppingEnabled = synchronizationMode == 0 &&
+                              (channelControl & (1u << 8)) != 0,
+            DmaWindowWords =
+                1u << (int)((channelControl >> 16) & 7),
+            CpuWindowCycles =
+                1u << (int)((channelControl >> 20) & 7),
         };
+        _gpuTransfer.WordsUntilChop = _gpuTransfer.DmaWindowWords;
     }
 
     private bool TickGpuBlock()
@@ -562,9 +654,12 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
         if (transfer.FromRam)
         {
-            _gpu.Write32(
-                GpuDevice.Gp0Address,
-                _ram.Read32(transfer.CurrentAddress & RamAddressMask));
+            if (!_gpu.TryWriteDmaWord(
+                    _ram.Read32(
+                        transfer.CurrentAddress & RamAddressMask)))
+            {
+                return false;
+            }
         }
         else
         {
@@ -681,9 +776,12 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             return false;
         }
 
-        _gpu.Write32(
-            GpuDevice.Gp0Address,
-            _ram.Read32(transfer.CommandAddress & RamAddressMask));
+        if (!_gpu.TryWriteDmaWord(
+                _ram.Read32(
+                    transfer.CommandAddress & RamAddressMask)))
+        {
+            return false;
+        }
         transfer.CommandAddress =
             (transfer.CommandAddress + 4) & DmaAddressMask;
         transfer.CommandsRemaining--;
@@ -693,6 +791,26 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             FinishGpuLinkedListNode(channel, transfer);
 
         return true;
+    }
+
+    private void ApplyGpuChopping(GpuTransferState transfer)
+    {
+        if (!transfer.ChoppingEnabled)
+            return;
+
+        if (transfer.WordsUntilChop > 0)
+            transfer.WordsUntilChop--;
+        if (transfer.WordsUntilChop != 0)
+            return;
+
+        ChannelState channel = _channels[GpuChannel];
+        channel.BaseAddress = transfer.CurrentAddress & 0x00FF_FFFF;
+        channel.BlockControl =
+            (channel.BlockControl & 0xFFFF_0000) |
+            (transfer.WordsInBlockRemaining & 0xFFFF);
+
+        transfer.WordsUntilChop = transfer.DmaWindowWords;
+        transfer.CpuWindowCyclesRemaining = transfer.CpuWindowCycles;
     }
 
     private void FinishGpuLinkedListNode(
@@ -891,6 +1009,8 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         public bool LinkedList;
         public bool FromRam;
         public bool Forced;
+        public bool Halted;
+        public bool ChoppingEnabled;
         public bool HeaderPending;
         public uint SynchronizationMode;
         public uint CurrentAddress;
@@ -901,6 +1021,10 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         public uint CommandAddress;
         public uint CommandsRemaining;
         public uint NextAddress;
+        public uint DmaWindowWords;
+        public uint CpuWindowCycles;
+        public uint WordsUntilChop;
+        public uint CpuWindowCyclesRemaining;
         public ulong TransferredWords;
     }
 }
