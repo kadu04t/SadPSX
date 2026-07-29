@@ -1,4 +1,6 @@
+using System.Buffers.Binary;
 using SadPSX.Core.Bus;
+using SadPSX.Core.CdRom.Audio;
 using SadPSX.Core.CdRom.Media;
 using SadPSX.Core.Interrupts;
 
@@ -25,6 +27,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private readonly Queue<byte> _data = new();
     private readonly Queue<Response> _responses = new();
     private readonly Queue<SectorBuffer> _sectorBuffers = new();
+    private readonly XaAdpcmDecoder _xaAdpcmDecoder = new();
 
     private byte _index;
     private byte _interruptEnable;
@@ -32,6 +35,14 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private byte _mode;
     private byte _filterFile;
     private byte _filterChannel;
+    private byte _pendingVolumeLeftToLeft;
+    private byte _pendingVolumeLeftToRight;
+    private byte _pendingVolumeRightToRight;
+    private byte _pendingVolumeRightToLeft;
+    private byte _volumeLeftToLeft;
+    private byte _volumeLeftToRight;
+    private byte _volumeRightToRight;
+    private byte _volumeRightToLeft;
     private bool _commandBusy;
     private uint _commandCyclesRemaining;
     private ulong _clockCycles;
@@ -40,6 +51,8 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private bool _reading;
     private bool _playing;
     private bool _muted;
+    private bool _adpcmMuted;
+    private bool _xaAudioActive;
     private bool _motorOn;
     private bool _seeking;
     private uint _readCyclesRemaining;
@@ -91,6 +104,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _data.Clear();
         _motorOn = false;
         _seeking = false;
+        _xaAdpcmDecoder.Reset();
     }
 
     public void EjectDisc()
@@ -103,6 +117,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _data.Clear();
         _motorOn = false;
         _seeking = false;
+        _xaAdpcmDecoder.Reset();
     }
 
     public void Reset()
@@ -118,6 +133,11 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _mode = 0;
         _filterFile = 0;
         _filterChannel = 0;
+        _pendingVolumeLeftToLeft = 0x80;
+        _pendingVolumeLeftToRight = 0;
+        _pendingVolumeRightToRight = 0x80;
+        _pendingVolumeRightToLeft = 0;
+        ApplyVolumeMatrix();
         _commandBusy = false;
         _commandCyclesRemaining = 0;
         _clockCycles = 0;
@@ -125,6 +145,8 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _reading = false;
         _playing = false;
         _muted = false;
+        _adpcmMuted = false;
+        _xaAudioActive = false;
         _motorOn = false;
         _seeking = false;
         _readCyclesRemaining = 0;
@@ -132,6 +154,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _lastSector = null;
         LastCommand = 0;
         CommandCount = 0;
+        _xaAdpcmDecoder.Reset();
     }
 
     public void Tick(uint cycles)
@@ -203,6 +226,10 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 StartCommand(value);
                 break;
 
+            case 1 when _index == 3:
+                _pendingVolumeRightToRight = value;
+                break;
+
             case 2 when _index == 0:
                 if (_parameters.Count < FifoCapacity)
                     _parameters.Enqueue(value);
@@ -212,8 +239,26 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
                 WriteInterruptEnable(value);
                 break;
 
+            case 2 when _index == 2:
+                _pendingVolumeLeftToLeft = value;
+                break;
+
+            case 2 when _index == 3:
+                _pendingVolumeRightToLeft = value;
+                break;
+
             case 3 when _index == 1:
                 AcknowledgeInterrupt(value);
+                break;
+
+            case 3 when _index == 2:
+                _pendingVolumeLeftToRight = value;
+                break;
+
+            case 3 when _index == 3:
+                _adpcmMuted = (value & 1) != 0;
+                if ((value & 0x20) != 0)
+                    ApplyVolumeMatrix();
                 break;
 
             case 3 when _index == 0:
@@ -254,6 +299,8 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private byte ReadStatus()
     {
         byte value = _index;
+        if (_xaAudioActive)
+            value |= 1 << 2;
         if (_parameters.Count == 0)
             value |= 1 << 3;
         if (_parameters.Count < FifoCapacity)
@@ -454,6 +501,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         }
 
         _pendingLogicalBlockAddress = logicalBlockAddress;
+        _xaAdpcmDecoder.Reset();
         return true;
     }
 
@@ -997,7 +1045,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         var sector = new byte[DiscImage.RawSectorSize];
         _disc.ReadSector(_pendingLogicalBlockAddress, sector);
         if (!_muted && currentTrack.Mode == DiscTrackMode.Audio)
-            CdAudioSectorReady?.Invoke(sector);
+            PublishCdAudio(sector);
 
         _pendingLogicalBlockAddress++;
         if (_pendingLogicalBlockAddress >= _disc.SectorCount)
@@ -1050,6 +1098,9 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         _pendingLogicalBlockAddress++;
         _lastSector = sector;
 
+        if (TryDeliverXaAudio(data))
+            return;
+
         if (_sectorBuffers.Count == MaximumSectorBuffers)
             _sectorBuffers.Dequeue();
         _sectorBuffers.Enqueue(sector);
@@ -1060,6 +1111,7 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     private void StopReading(bool clearBuffers)
     {
         _reading = false;
+        _xaAudioActive = false;
         _readCyclesRemaining = 0;
         if (clearBuffers)
         {
@@ -1095,6 +1147,85 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
         if (_playing)
             status |= 1 << 7;
         return status;
+    }
+
+    private bool TryDeliverXaAudio(ReadOnlySpan<byte> sector)
+    {
+        if (sector.Length < DiscImage.RawSectorSize || sector[15] != 2)
+            return false;
+
+        byte submode = sector[18];
+        bool audioRealtime = (submode & 0x44) == 0x44;
+        if (!audioRealtime)
+            return false;
+
+        bool xaEnabled = (_mode & 0x40) != 0;
+        bool filterEnabled = (_mode & 0x08) != 0;
+        bool filterMatches =
+            sector[16] == _filterFile &&
+            sector[17] == _filterChannel;
+        if (xaEnabled && (!filterEnabled || filterMatches))
+        {
+            _xaAudioActive = true;
+            if (!_muted && !_adpcmMuted)
+                PublishCdAudio(_xaAdpcmDecoder.DecodeSector(sector));
+        }
+
+        return xaEnabled || filterEnabled;
+    }
+
+    private void PublishCdAudio(ReadOnlySpan<byte> pcm)
+    {
+        if (pcm.Length < 4 || (pcm.Length & 3) != 0)
+            return;
+
+        short[] samples = new short[pcm.Length / 2];
+        for (int index = 0; index < samples.Length; index++)
+        {
+            samples[index] = BinaryPrimitives.ReadInt16LittleEndian(
+                pcm.Slice(index * 2, 2));
+        }
+
+        PublishCdAudio(samples);
+    }
+
+    private void PublishCdAudio(ReadOnlySpan<short> samples)
+    {
+        if (samples.Length < 2 || (samples.Length & 1) != 0)
+            return;
+
+        byte[] mixed = new byte[samples.Length * 2];
+        for (int frame = 0; frame < samples.Length / 2; frame++)
+        {
+            int sourceLeft = samples[frame * 2];
+            int sourceRight = samples[frame * 2 + 1];
+            short left = (short)Math.Clamp(
+                (sourceLeft * _volumeLeftToLeft +
+                 sourceRight * _volumeRightToLeft) >> 7,
+                short.MinValue,
+                short.MaxValue);
+            short right = (short)Math.Clamp(
+                (sourceLeft * _volumeLeftToRight +
+                 sourceRight * _volumeRightToRight) >> 7,
+                short.MinValue,
+                short.MaxValue);
+            BinaryPrimitives.WriteInt16LittleEndian(
+                mixed.AsSpan(frame * 4, 2),
+                left);
+            BinaryPrimitives.WriteInt16LittleEndian(
+                mixed.AsSpan(frame * 4 + 2, 2),
+                right);
+        }
+
+        CdAudioSectorReady?.Invoke(mixed);
+    }
+
+    private void ApplyVolumeMatrix()
+    {
+        _volumeLeftToLeft = _pendingVolumeLeftToLeft;
+        _volumeLeftToRight = _pendingVolumeLeftToRight;
+        _volumeRightToRight = _pendingVolumeRightToRight;
+        _volumeRightToLeft = _pendingVolumeRightToLeft;
     }
 
     private static int FromBcd(byte value) =>

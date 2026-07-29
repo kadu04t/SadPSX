@@ -3,6 +3,8 @@ namespace SadPSX.Core.Spu;
 internal sealed class SpuVoice
 {
     public readonly short[] DecodedSamples = new short[28];
+    public readonly SpuVolume LeftVolume = new();
+    public readonly SpuVolume RightVolume = new();
 
     public bool Active;
     public bool StopAfterBlock;
@@ -16,9 +18,14 @@ internal sealed class SpuVoice
     public int EnvelopeCounter;
     public EnvelopePhase EnvelopePhase;
 
-    public void Reset()
+    public void Reset(bool resetVolumes = true)
     {
         Array.Clear(DecodedSamples);
+        if (resetVolumes)
+        {
+            LeftVolume.Reset();
+            RightVolume.Reset();
+        }
         Active = false;
         StopAfterBlock = false;
         CurrentAddress = 0;

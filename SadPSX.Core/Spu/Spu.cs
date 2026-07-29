@@ -35,7 +35,7 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private const int VoiceCount = 24;
     private const int SoundRamSize = 512 * 1024;
     private const uint ControlApplyDelayCycles = 2;
-    private const int MaximumQueuedSampleFrames = 8_192;
+    private const int MaximumQueuedSampleFrames = 16_384;
     private const int CaptureBufferSize = 0x400;
     private const int CdLeftCaptureBase = 0x000;
     private const int CdRightCaptureBase = 0x400;
@@ -50,6 +50,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private readonly Queue<ushort> _transferFifo = new(32);
     private readonly Queue<StereoSample> _sampleQueue = new();
     private readonly Queue<StereoSample> _cdAudioQueue = new();
+    private readonly SpuVolume _mainVolumeLeft = new();
+    private readonly SpuVolume _mainVolumeRight = new();
     private readonly SpuVoice[] _voices =
         Enumerable.Range(0, VoiceCount).Select(_ => new SpuVoice()).ToArray();
     private readonly InterruptController? _interruptController;
@@ -85,6 +87,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         _transferFifo.Clear();
         _sampleQueue.Clear();
         _cdAudioQueue.Clear();
+        _mainVolumeLeft.Reset();
+        _mainVolumeRight.Reset();
         foreach (SpuVoice voice in _voices)
             voice.Reset();
         _currentTransferAddress = 0;
@@ -189,6 +193,16 @@ public sealed class Spu : IClockedDevice, IMmioDevice
                     ClearIrqFlag();
                 _pendingStatusMode = (ushort)(value & 0x003F);
                 _controlApplyCycles = ControlApplyDelayCycles;
+                break;
+
+            case MainVolumeLeftRegister:
+                WriteRawRegister(address, value);
+                _mainVolumeLeft.Configure(value);
+                break;
+
+            case MainVolumeRightRegister:
+                WriteRawRegister(address, value);
+                _mainVolumeRight.Configure(value);
                 break;
 
             case KeyOnLowRegister:
@@ -360,7 +374,7 @@ public sealed class Spu : IClockedDevice, IMmioDevice
 
             SpuVoice voice = _voices[voiceIndex];
             uint voiceAddress = BaseAddress + (uint)voiceIndex * 0x10;
-            voice.Reset();
+            voice.Reset(resetVolumes: false);
             voice.Active = true;
             voice.CurrentAddress =
                 (uint)ReadRawRegister(voiceAddress + 6) * 8 % SoundRamSize;
@@ -394,6 +408,10 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         else if (offset == 14)
             _voices[voiceIndex].RepeatAddress =
                 (uint)value * 8 % SoundRamSize;
+        else if (offset == 0)
+            _voices[voiceIndex].LeftVolume.Configure(value);
+        else if (offset == 2)
+            _voices[voiceIndex].RightVolume.Configure(value);
     }
 
     private void GenerateSample()
@@ -417,9 +435,9 @@ public sealed class Spu : IClockedDevice, IMmioDevice
             else if (voiceIndex == 3)
                 voice3Output = sample;
 
-            uint voiceAddress = BaseAddress + (uint)voiceIndex * 0x10;
-            int volumeLeft = DecodeVolume(ReadRawRegister(voiceAddress));
-            int volumeRight = DecodeVolume(ReadRawRegister(voiceAddress + 2));
+            SpuVoice voice = _voices[voiceIndex];
+            int volumeLeft = voice.LeftVolume.Tick();
+            int volumeRight = voice.RightVolume.Tick();
             left += (long)sample * volumeLeft / 0x8000;
             right += (long)sample * volumeRight / 0x8000;
         }
@@ -447,8 +465,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
                 0x8000;
         }
 
-        left = left * DecodeVolume(ReadRawRegister(MainVolumeLeftRegister)) / 0x8000;
-        right = right * DecodeVolume(ReadRawRegister(MainVolumeRightRegister)) / 0x8000;
+        left = left * _mainVolumeLeft.Tick() / 0x8000;
+        right = right * _mainVolumeRight.Tick() / 0x8000;
 
         if (_sampleQueue.Count == MaximumQueuedSampleFrames)
             _sampleQueue.Dequeue();
@@ -817,14 +835,6 @@ public sealed class Spu : IClockedDevice, IMmioDevice
         WriteRawRegister(
             StatusRegister,
             (ushort)(status & ~(1 << 6)));
-    }
-
-    private static int DecodeVolume(ushort value)
-    {
-        int volume = value & 0x7FFF;
-        if ((volume & 0x4000) != 0)
-            volume |= ~0x7FFF;
-        return Math.Clamp(volume * 2, short.MinValue, short.MaxValue);
     }
 
     private static int DecodeSignedVolume(ushort value) => (short)value;
