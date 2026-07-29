@@ -97,6 +97,50 @@ public sealed class Sio0Tests
         Assert.False(bus.Sio0.DsrAsserted);
     }
 
+    [Fact]
+    public void DeviceAddressRoutesMemoryCardOnSharedPort()
+    {
+        var bus = CreateConfiguredBus();
+
+        byte[] response =
+        [
+            Transfer(bus, 0x81),
+            Transfer(bus, 0x53),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+        ];
+
+        Assert.Equal(
+            [0xFF, 0x08, 0x5A, 0x5D, 0x5C, 0x5D, 0x04, 0, 0, 0x80],
+            response);
+    }
+
+    [Fact]
+    public void PortTwoCanHostIndependentController()
+    {
+        var bus = CreateConfiguredBus(control: 0x2003);
+        var controller = new DigitalController();
+        controller.SetButton(ControllerButton.Start, true);
+        bus.Sio0.AttachController(2, controller);
+
+        byte[] response =
+        [
+            Transfer(bus, 0x01),
+            Transfer(bus, 0x42),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+            Transfer(bus, 0),
+        ];
+
+        Assert.Equal([0xFF, 0x41, 0x5A, 0xF7, 0xFF], response);
+    }
+
     private static Bus CreateConfiguredBus(ushort control = 0x0003)
     {
         var bus = new Bus();

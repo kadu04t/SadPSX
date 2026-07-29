@@ -4,11 +4,11 @@ namespace SadPSX.Frontend.Input;
 
 internal sealed class ControllerInputState
 {
-    private readonly DigitalController _controller;
+    private readonly IController _controller;
     private readonly HashSet<ControllerButton> _keyboardButtons = [];
     private readonly HashSet<ControllerButton> _gamepadButtons = [];
 
-    public ControllerInputState(DigitalController controller)
+    public ControllerInputState(IController controller)
     {
         _controller = controller ??
             throw new ArgumentNullException(nameof(controller));
@@ -30,6 +30,14 @@ internal sealed class ControllerInputState
         _gamepadButtons.Clear();
         foreach (ControllerButton button in buttons)
             ApplyButton(button);
+
+        foreach (ControllerAxis axis in Enum.GetValues<ControllerAxis>())
+            _controller.SetAxis(axis, 0x80);
+    }
+
+    public void SetGamepadAxis(ControllerAxis axis, byte value)
+    {
+        _controller.SetAxis(axis, value);
     }
 
     private void SetButton(

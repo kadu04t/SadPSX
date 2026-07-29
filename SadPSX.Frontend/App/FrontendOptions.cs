@@ -3,6 +3,7 @@ namespace SadPSX.Frontend.App;
 internal sealed record FrontendOptions(
     string BiosPath,
     string? DiscPath,
+    string? MemoryCardPath,
     int InstructionBatchSize,
     bool StartPaused,
     int? FrameLimit)
@@ -14,6 +15,7 @@ internal sealed record FrontendOptions(
 
         string? biosPath = null;
         string? discPath = null;
+        string? memoryCardPath = null;
         int instructionBatchSize = 10_000;
         bool startPaused = false;
         int? frameLimit = null;
@@ -33,6 +35,11 @@ internal sealed record FrontendOptions(
 
                 case "--disc":
                     discPath = Path.GetFullPath(
+                        ReadValue(arguments, ref argumentIndex, argument));
+                    break;
+
+                case "--memory-card":
+                    memoryCardPath = Path.GetFullPath(
                         ReadValue(arguments, ref argumentIndex, argument));
                     break;
 
@@ -66,6 +73,7 @@ internal sealed record FrontendOptions(
         return new FrontendOptions(
             Path.GetFullPath(biosPath),
             discPath,
+            memoryCardPath,
             instructionBatchSize,
             startPaused,
             frameLimit);

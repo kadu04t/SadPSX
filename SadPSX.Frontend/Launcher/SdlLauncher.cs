@@ -67,6 +67,7 @@ internal sealed class SdlLauncher : IDisposable
         return new FrontendOptions(
             _biosPath,
             _discPath,
+            MemoryCardPath: null,
             DefaultInstructionBatchSize,
             StartPaused: false,
             FrameLimit: null);

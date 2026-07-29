@@ -36,16 +36,21 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private byte _queuedTransmitByte;
     private uint _acknowledgeDelayRemaining;
     private uint _acknowledgeCyclesRemaining;
+    private ISioPeripheral? _activePeripheral;
 
     public Sio0(InterruptController interruptController)
     {
         _interruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
-        ControllerPort1 = new DigitalController();
+        ControllerPort1 = new AnalogController();
+        MemoryCardPort1 = MemoryCard.CreateFormatted();
         Reset();
     }
 
-    public DigitalController ControllerPort1 { get; }
+    public IController ControllerPort1 { get; private set; }
+    public IController? ControllerPort2 { get; private set; }
+    public MemoryCard? MemoryCardPort1 { get; private set; }
+    public MemoryCard? MemoryCardPort2 { get; private set; }
     public ushort Mode => _mode;
     public ushort Control => _control;
     public ushort Baud => _baud;
@@ -68,8 +73,37 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         _queuedTransmitByte = 0;
         _acknowledgeDelayRemaining = 0;
         _acknowledgeCyclesRemaining = 0;
-        ControllerPort1.ResetTransfer();
+        _activePeripheral = null;
+        ResetPeripheralTransfers();
         ControllerPort1.ReleaseAll();
+        ControllerPort2?.ReleaseAll();
+    }
+
+    public void AttachController(int port, IController? controller)
+    {
+        ValidatePort(port);
+        _activePeripheral?.ResetTransfer();
+        _activePeripheral = null;
+
+        if (port == 1)
+        {
+            ControllerPort1 = controller ??
+                throw new ArgumentNullException(nameof(controller));
+        }
+        else
+            ControllerPort2 = controller;
+    }
+
+    public void AttachMemoryCard(int port, MemoryCard? memoryCard)
+    {
+        ValidatePort(port);
+        _activePeripheral?.ResetTransfer();
+        _activePeripheral = null;
+
+        if (port == 1)
+            MemoryCardPort1 = memoryCard;
+        else
+            MemoryCardPort2 = memoryCard;
     }
 
     public void Tick(uint cycles)
@@ -300,6 +334,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private void WriteControl(ushort value)
     {
         bool dtrWasSet = (_control & Dtr) != 0;
+        bool portTwoWasSelected = (_control & PortSelect) != 0;
 
         if ((value & ResetBit) != 0)
         {
@@ -312,9 +347,12 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
         _control = (ushort)(value & 0x3F0F);
         bool dtrIsSet = (_control & Dtr) != 0;
-        if (dtrWasSet && !dtrIsSet)
+        bool portChanged =
+            portTwoWasSelected != ((_control & PortSelect) != 0);
+        if ((dtrWasSet && !dtrIsSet) || portChanged)
         {
-            ControllerPort1.ResetTransfer();
+            ResetPeripheralTransfers();
+            _activePeripheral = null;
             _transferPending = false;
             _transferCyclesRemaining = 0;
             _transmitQueued = false;
@@ -342,9 +380,11 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     private void BeginTransfer(byte value)
     {
-        _pendingResult = (_control & PortSelect) == 0
-            ? ControllerPort1.Transfer(value)
-            : new ControllerTransferResult(0xFF, false);
+        if (_activePeripheral is null)
+            _activePeripheral = ResolvePeripheral(value);
+
+        _pendingResult = _activePeripheral?.Transfer(value) ??
+            new ControllerTransferResult(0xFF, false);
         _transferPending = true;
         _transferCyclesRemaining = CalculateTransferCycles();
     }
@@ -386,7 +426,10 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         if (_pendingResult.Acknowledge)
             _acknowledgeDelayRemaining = AcknowledgeDelayCycles;
         else
+        {
+            _activePeripheral = null;
             TryStartQueuedTransfer();
+        }
 
         bool rxInterrupt = (_control & RxInterruptEnable) != 0 &&
                            _receiveFifo.Count >= ReceiveInterruptThreshold();
@@ -433,5 +476,30 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
             _receiveFifo.Dequeue();
 
         return result;
+    }
+
+    private ISioPeripheral? ResolvePeripheral(byte address)
+    {
+        bool portTwo = (_control & PortSelect) != 0;
+        return address switch
+        {
+            0x01 => portTwo ? ControllerPort2 : ControllerPort1,
+            0x81 => portTwo ? MemoryCardPort2 : MemoryCardPort1,
+            _ => null,
+        };
+    }
+
+    private void ResetPeripheralTransfers()
+    {
+        ControllerPort1.ResetTransfer();
+        ControllerPort2?.ResetTransfer();
+        MemoryCardPort1?.ResetTransfer();
+        MemoryCardPort2?.ResetTransfer();
+    }
+
+    private static void ValidatePort(int port)
+    {
+        if (port is not 1 and not 2)
+            throw new ArgumentOutOfRangeException(nameof(port));
     }
 }

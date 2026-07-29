@@ -83,6 +83,30 @@ internal sealed class SdlGamepadInput : IDisposable
 
         switch (axis)
         {
+            case SDL.GamepadAxis.LeftX:
+                _inputState.SetGamepadAxis(
+                    ControllerAxis.LeftX,
+                    ConvertAxis(value));
+                break;
+
+            case SDL.GamepadAxis.LeftY:
+                _inputState.SetGamepadAxis(
+                    ControllerAxis.LeftY,
+                    ConvertAxis(value));
+                break;
+
+            case SDL.GamepadAxis.RightX:
+                _inputState.SetGamepadAxis(
+                    ControllerAxis.RightX,
+                    ConvertAxis(value));
+                break;
+
+            case SDL.GamepadAxis.RightY:
+                _inputState.SetGamepadAxis(
+                    ControllerAxis.RightY,
+                    ConvertAxis(value));
+                break;
+
             case SDL.GamepadAxis.LeftTrigger:
                 SetTrigger(
                     ControllerButton.L2,
@@ -146,4 +170,7 @@ internal sealed class SdlGamepadInput : IDisposable
         currentState = pressed;
         _inputState.SetGamepadButton(button, pressed);
     }
+
+    private static byte ConvertAxis(short value) =>
+        (byte)(((int)value - short.MinValue + 128) / 257);
 }

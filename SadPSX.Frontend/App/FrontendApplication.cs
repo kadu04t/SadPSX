@@ -21,6 +21,7 @@ internal sealed class FrontendApplication : IDisposable
     private readonly DiagnosticConsole _diagnosticConsole;
     private readonly SdlVideoOutput _videoOutput;
     private readonly SdlAudioOutput _audioOutput;
+    private readonly MemoryCard _memoryCard;
     private readonly ControllerInputState _controllerInput;
     private readonly SdlGamepadInput _gamepadInput;
     private readonly int _instructionBatchSize;
@@ -37,6 +38,9 @@ internal sealed class FrontendApplication : IDisposable
     private FrontendApplication(FrontendOptions options)
     {
         _machine = new PsxMachine();
+        _memoryCard = MemoryCard.LoadOrCreate(
+            options.MemoryCardPath ?? GetDefaultMemoryCardPath());
+        _machine.Bus.Sio0.AttachMemoryCard(1, _memoryCard);
         _machine.LoadBios(options.BiosPath);
         if (options.DiscPath is not null)
             _machine.LoadDisc(options.DiscPath);
@@ -123,6 +127,8 @@ internal sealed class FrontendApplication : IDisposable
 
     public void Dispose()
     {
+        if (_memoryCard.IsDirty)
+            _memoryCard.Save();
         _gamepadInput.Dispose();
         _videoOutput.Dispose();
         _audioOutput.Dispose();
@@ -345,6 +351,7 @@ internal sealed class FrontendApplication : IDisposable
                     "Boot: SYSTEM.CNF ou executável não encontrado.");
             }
         }
+        Console.WriteLine($"Memory card: {_memoryCard.BackingPath}");
         Console.WriteLine($"Lote de instruções: {_instructionBatchSize}");
         Console.WriteLine();
         Console.WriteLine("Controles:");
@@ -373,6 +380,14 @@ internal sealed class FrontendApplication : IDisposable
         Console.Error.WriteLine(
             "Uso: SadPSX " +
             "<BIOS.BIN> [--disc jogo.cue|jogo.bin] " +
+            "[--memory-card card1.mcr] " +
             "[--batch N] [--paused] [--frames N]");
+    }
+
+    private static string GetDefaultMemoryCardPath()
+    {
+        string root = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+        return Path.Combine(root, "SadPSX", "MemoryCards", "card1.mcr");
     }
 }

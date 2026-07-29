@@ -1,6 +1,6 @@
 namespace SadPSX.Core.Controllers;
 
-public sealed class DigitalController
+public sealed class DigitalController : IController
 {
     private ushort _buttons = ushort.MaxValue;
     private int _transferIndex;
@@ -22,6 +22,10 @@ public sealed class DigitalController
     public void ReleaseAll()
     {
         _buttons = ushort.MaxValue;
+    }
+
+    public void SetAxis(ControllerAxis axis, byte value)
+    {
     }
 
     public void ResetTransfer()
@@ -64,5 +68,3 @@ public sealed class DigitalController
         return result;
     }
 }
-
-public readonly record struct ControllerTransferResult(byte Data, bool Acknowledge);

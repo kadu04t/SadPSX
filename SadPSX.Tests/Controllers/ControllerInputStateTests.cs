@@ -37,4 +37,22 @@ public sealed class ControllerInputStateTests
         Assert.True(controller.IsPressed(ControllerButton.Start));
         Assert.False(controller.IsPressed(ControllerButton.Cross));
     }
+
+    [Fact]
+    public void GamepadAxesReachAnalogControllerAndResetOnDisconnect()
+    {
+        var controller = new AnalogController();
+        var inputState = new ControllerInputState(controller);
+
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x20);
+        inputState.SetGamepadAxis(ControllerAxis.RightY, 0xE0);
+
+        Assert.Equal(0x20, controller.LeftX);
+        Assert.Equal(0xE0, controller.RightY);
+
+        inputState.ReleaseGamepad();
+
+        Assert.Equal(0x80, controller.LeftX);
+        Assert.Equal(0x80, controller.RightY);
+    }
 }
