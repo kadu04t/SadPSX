@@ -167,6 +167,35 @@ public sealed class Sio0Tests
             entry => Assert.Equal(2, entry.Port));
     }
 
+    [Fact]
+    public void DataWordReadDequeuesFourReceiveBytes()
+    {
+        var bus = CreateConfiguredBus();
+        QueueTransfer(bus, 0x01);
+        QueueTransfer(bus, 0x42);
+        QueueTransfer(bus, 0x00);
+        QueueTransfer(bus, 0x00);
+
+        uint response = bus.Read32(Sio0.DataAddress);
+
+        Assert.Equal(0xFF5A41FFu, response);
+        Assert.Equal(0, bus.Sio0.ReceiveCount);
+    }
+
+    [Fact]
+    public void DataHalfWordReadDequeuesOneReceiveByte()
+    {
+        var bus = CreateConfiguredBus();
+        QueueTransfer(bus, 0x01);
+        QueueTransfer(bus, 0x42);
+
+        ushort response = bus.Read16(Sio0.DataAddress);
+
+        Assert.Equal(0x41FF, response);
+        Assert.Equal(1, bus.Sio0.ReceiveCount);
+        Assert.Equal(0x41, bus.Read8(Sio0.DataAddress));
+    }
+
     private static Bus CreateConfiguredBus(ushort control = 0x0003)
     {
         var bus = new Bus();
@@ -181,5 +210,11 @@ public sealed class Sio0Tests
         bus.Write8(Sio0.DataAddress, value);
         bus.Sio0.Tick(2000);
         return bus.Read8(Sio0.DataAddress);
+    }
+
+    private static void QueueTransfer(Bus bus, byte value)
+    {
+        bus.Write8(Sio0.DataAddress, value);
+        bus.Sio0.Tick(2000);
     }
 }

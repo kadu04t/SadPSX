@@ -233,7 +233,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
         return address switch
         {
-            DataAddress => (ushort)ReadReceivePreview(2, dequeue: true),
+            DataAddress => (ushort)ReadReceivePreview(2, dequeueCount: 1),
             StatusAddress => (ushort)ReadStatus(),
             StatusAddress + 2 => (ushort)(ReadStatus() >> 16),
             ModeAddress => _mode,
@@ -251,7 +251,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
         return address switch
         {
-            DataAddress => ReadReceivePreview(4, dequeue: true),
+            DataAddress => ReadReceivePreview(4, dequeueCount: 4),
             StatusAddress => ReadStatus(),
             ModeAddress => _mode | ((uint)_control << 16),
             _ => 0,
@@ -265,7 +265,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
         return address switch
         {
-            DataAddress => ReadReceivePreview(4, dequeue: false),
+            DataAddress => ReadReceivePreview(4, dequeueCount: 0),
             StatusAddress => ReadStatus(),
             ModeAddress => _mode | ((uint)_control << 16),
             _ => 0,
@@ -539,14 +539,15 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         return _receiveFifo.TryDequeue(out byte value) ? value : (byte)0xFF;
     }
 
-    private uint ReadReceivePreview(int byteCount, bool dequeue)
+    private uint ReadReceivePreview(int byteCount, int dequeueCount)
     {
         byte[] values = _receiveFifo.Take(byteCount).ToArray();
         uint result = 0;
         for (int index = 0; index < values.Length; index++)
             result |= (uint)values[index] << (index * 8);
 
-        if (dequeue && _receiveFifo.Count > 0)
+        int bytesToDequeue = Math.Min(dequeueCount, _receiveFifo.Count);
+        for (int index = 0; index < bytesToDequeue; index++)
             _receiveFifo.Dequeue();
 
         return result;
