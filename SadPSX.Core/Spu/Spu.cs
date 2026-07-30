@@ -8,6 +8,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
 {
     public const uint BaseAddress = 0x1F80_1C00;
     public const uint EndAddress = 0x1F80_1DFF;
+    public const uint VoiceCurrentVolumeBaseAddress = 0x1F80_1E00;
+    public const uint VoiceCurrentVolumeEndAddress = 0x1F80_1E5F;
     public const uint TransferAddressRegister = 0x1F80_1DA6;
     public const uint TransferFifoRegister = 0x1F80_1DA8;
     public const uint ControlRegister = 0x1F80_1DAA;
@@ -127,7 +129,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     }
 
     public bool Handles(uint address) =>
-        address >= BaseAddress && address <= EndAddress;
+        address >= BaseAddress && address <= EndAddress ||
+        IsVoiceCurrentVolumeAddress(address);
 
     public byte Read8(uint address)
     {
@@ -139,6 +142,9 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public ushort Read16(uint address)
     {
         ValidateHalfwordAddress(address);
+        if (IsVoiceCurrentVolumeAddress(address))
+            return ReadVoiceCurrentVolume(address);
+
         return ReadRawRegister(address);
     }
 
@@ -154,6 +160,9 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public void Write8(uint address, byte value)
     {
         uint registerAddress = address & ~1u;
+        if (IsVoiceCurrentVolumeAddress(registerAddress))
+            return;
+
         ushort currentValue = ReadRawRegister(registerAddress);
         int shift = (int)((address & 1) * 8);
         ushort mask = (ushort)(0xFF << shift);
@@ -166,6 +175,8 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public void Write16(uint address, ushort value)
     {
         ValidateHalfwordAddress(address);
+        if (IsVoiceCurrentVolumeAddress(address))
+            return;
 
         switch (address)
         {
@@ -245,6 +256,14 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     public string GetRegisterName(uint address)
     {
         uint registerAddress = address & ~1u;
+        if (IsVoiceCurrentVolumeAddress(registerAddress))
+        {
+            int voiceIndex = (int)(
+                (registerAddress - VoiceCurrentVolumeBaseAddress) / 4);
+            string channel = (registerAddress & 2) == 0 ? "L" : "R";
+            return $"SPU_V{voiceIndex}_CUR_VOL_{channel}";
+        }
+
         return registerAddress switch
         {
             PitchModulationLowRegister => "SPU_PMON_LOW",
@@ -356,13 +375,30 @@ public sealed class Spu : IClockedDevice, IMmioDevice
     private static void ValidateHalfwordAddress(uint address)
     {
         if ((address & 1) != 0 ||
-            address < BaseAddress ||
-            address > EndAddress - 1)
+            !IsHalfwordRegisterAddress(address))
         {
             throw new InvalidOperationException(
                 $"Endereço inválido de registrador SPU: 0x{address:X8}.");
         }
     }
+
+    private ushort ReadVoiceCurrentVolume(uint address)
+    {
+        int voiceIndex = (int)(
+            (address - VoiceCurrentVolumeBaseAddress) / 4);
+        SpuVolume volume = (address & 2) == 0
+            ? _voices[voiceIndex].LeftVolume
+            : _voices[voiceIndex].RightVolume;
+        return unchecked((ushort)(short)volume.Level);
+    }
+
+    private static bool IsHalfwordRegisterAddress(uint address) =>
+        address >= BaseAddress && address <= EndAddress - 1 ||
+        IsVoiceCurrentVolumeAddress(address);
+
+    private static bool IsVoiceCurrentVolumeAddress(uint address) =>
+        address >= VoiceCurrentVolumeBaseAddress &&
+        address <= VoiceCurrentVolumeEndAddress;
 
     private void KeyOn(ushort flags, int voiceBase)
     {

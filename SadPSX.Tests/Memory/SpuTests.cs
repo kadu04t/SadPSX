@@ -22,6 +22,48 @@ public sealed class SpuTests
     }
 
     [Fact]
+    public void CurrentVoiceVolumesAreReadableThroughBus()
+    {
+        var bus = new Bus();
+        bus.Mmio.TraceMode = SadPSX.Core.Bus.MmioTraceMode.Full;
+
+        bus.Write16(0x1F80_1D60, 0x2000);
+        bus.Write16(0x1F80_1D62, 0x6000);
+
+        Assert.Equal(0x4000, bus.Read16(0x1F80_1E58));
+        Assert.Equal(0xC000, bus.Read16(0x1F80_1E5A));
+        Assert.Equal(0xC000_4000u, bus.Read32(0x1F80_1E58));
+        Assert.Null(bus.Mmio.LastUnhandledReadAddress);
+        Assert.Contains(
+            bus.Mmio.AccessSummaries,
+            summary =>
+                summary.Address == 0x1F80_1E58 &&
+                summary.RegisterName == "SPU_V22_CUR_VOL_L" &&
+                summary.Handled);
+        Assert.Contains(
+            bus.Mmio.AccessSummaries,
+            summary =>
+                summary.Address == 0x1F80_1E5A &&
+                summary.RegisterName == "SPU_V22_CUR_VOL_R" &&
+                summary.Handled);
+    }
+
+    [Fact]
+    public void CurrentVoiceVolumeRegistersIgnoreWrites()
+    {
+        var spu = new SpuDevice();
+        spu.Write16(0x1F80_1C00, 0x1000);
+
+        spu.Write16(SpuDevice.VoiceCurrentVolumeBaseAddress, 0x7FFF);
+        spu.Write8(SpuDevice.VoiceCurrentVolumeBaseAddress, 0xFF);
+        spu.Write32(SpuDevice.VoiceCurrentVolumeBaseAddress, uint.MaxValue);
+
+        Assert.Equal(
+            0x2000,
+            spu.Read16(SpuDevice.VoiceCurrentVolumeBaseAddress));
+    }
+
+    [Fact]
     public void ControlModeAppearsInStatusAfterShortDelay()
     {
         var spu = new SpuDevice();
