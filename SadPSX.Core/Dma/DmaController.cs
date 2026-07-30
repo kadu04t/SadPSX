@@ -120,10 +120,14 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
             GpuTransferState transfer = _gpuTransfer;
             if (transfer.Halted)
+            {
+                TryStartPendingNonGpuChannels();
                 return;
+            }
 
             if (transfer.CpuWindowCyclesRemaining > 0)
             {
+                TryStartPendingNonGpuChannels();
                 uint elapsed = Math.Min(
                     cyclesRemaining,
                     transfer.CpuWindowCyclesRemaining);
@@ -136,6 +140,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             if (transfer.Forced &&
                 (channel.ChannelControl & (1u << 29)) != 0)
             {
+                TryStartPendingNonGpuChannels();
                 return;
             }
 
@@ -143,7 +148,10 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 ? TickGpuLinkedList()
                 : TickGpuBlock();
             if (!transferred)
+            {
+                TryStartPendingNonGpuChannels();
                 return;
+            }
 
             cyclesRemaining--;
             if (ReferenceEquals(_gpuTransfer, transfer))
@@ -350,7 +358,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
     private void TryStartChannel(int channel)
     {
-        if (_gpuTransfer is not null)
+        if (_gpuTransfer is not null && channel == GpuChannel)
             return;
 
         ChannelState state = _channels[channel];
@@ -414,13 +422,28 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         }
     }
 
-    private int GetHighestPriorityPendingChannel()
+    private void TryStartPendingNonGpuChannels()
+    {
+        while (true)
+        {
+            int channel = GetHighestPriorityPendingChannel(
+                excludeGpu: true);
+            if (channel < 0)
+                return;
+
+            TryStartChannel(channel);
+        }
+    }
+
+    private int GetHighestPriorityPendingChannel(bool excludeGpu = false)
     {
         int selectedChannel = -1;
         int selectedPriority = int.MaxValue;
 
         for (int channel = 0; channel < _channels.Length; channel++)
         {
+            if (excludeGpu && channel == GpuChannel)
+                continue;
             if (!IsChannelPending(channel))
                 continue;
 

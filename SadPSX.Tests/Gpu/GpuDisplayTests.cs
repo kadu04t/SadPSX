@@ -20,10 +20,23 @@ public sealed class GpuDisplayTests
         Assert.Equal(12, display.VramX);
         Assert.Equal(101, display.VramY);
         Assert.Equal(640, display.Width);
-        Assert.Equal(480, display.Height);
+        Assert.Equal(448, display.Height);
         Assert.True(display.Enabled);
         Assert.False(display.IsPal);
         Assert.True(display.IsInterlaced);
+    }
+
+    [Fact]
+    public void DisplayHeightUsesTheConfiguredVerticalRange()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+        uint verticalRange = 16u | (240u << 10);
+
+        gpu.Write32(
+            GpuDevice.GpuStatusAddress,
+            0x0700_0000 | verticalRange);
+
+        Assert.Equal(224, gpu.GetDisplayInfo().Height);
     }
 
     [Fact]
@@ -48,7 +61,8 @@ public sealed class GpuDisplayTests
     public void DisabledDisplayProducesBlackFrame()
     {
         var gpu = new GpuDevice(new InterruptController());
-        var pixels = new uint[256 * 240];
+        GpuDisplayInfo display = gpu.GetDisplayInfo();
+        var pixels = new uint[display.Width * display.Height];
         Array.Fill(pixels, uint.MaxValue);
 
         gpu.CopyDisplayRgba(pixels);

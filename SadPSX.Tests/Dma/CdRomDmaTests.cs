@@ -58,6 +58,50 @@ public sealed class CdRomDmaTests
             bus.Dma.GetChannel(3).ChannelControl & (1u << 24));
     }
 
+    [Fact]
+    public void CdRomDmaRunsWhileGpuDmaWaitsForRequest()
+    {
+        var bus = new Bus();
+        using var disc = new MemoryDiscImage();
+        disc.Sector[24] = 0x44;
+        disc.Sector[25] = 0x33;
+        disc.Sector[26] = 0x22;
+        disc.Sector[27] = 0x11;
+        bus.CdRom.LoadDisc(disc);
+        ReadFirstSector(bus);
+        RequestData(bus);
+
+        uint enabledChannels =
+            bus.Dma.Control | (1u << 11) | (1u << 15);
+        bus.Write32(DmaController.ControlAddress, enabledChannels);
+
+        bus.Ram.Write32(0x2000, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x2000);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0001);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        bus.Write32(ChannelRegister(3, 0), 0x1000);
+        bus.Write32(ChannelRegister(3, 4), 0x0001_0001);
+        bus.Write32(ChannelRegister(3, 8), 0x0100_0200);
+
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(3).ChannelControl & (1u << 24));
+
+        bus.Dma.Tick(1);
+
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(3).ChannelControl & (1u << 24));
+        Assert.Equal(0x1122_3344u, bus.Ram.Read32(0x1000));
+    }
+
     private static void ReadFirstSector(Bus bus)
     {
         SetIndex(bus, 0);

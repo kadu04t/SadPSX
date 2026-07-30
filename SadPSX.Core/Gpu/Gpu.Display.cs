@@ -14,7 +14,13 @@ public sealed partial class Gpu
                 3 => 640,
                 _ => 256,
             };
-        int height = (_status & (1u << 19)) != 0 ? 480 : 240;
+        int verticalStart = (int)(VerticalDisplayRange & 0x03FF);
+        int verticalEnd = (int)((VerticalDisplayRange >> 10) & 0x03FF);
+        int visibleScanlines = Math.Max(1, verticalEnd - verticalStart);
+        int height = (_status & (1u << 19)) != 0
+            ? visibleScanlines * 2
+            : visibleScanlines;
+        height = Math.Min(height, Vram.Height);
 
         return new GpuDisplayInfo(
             (int)(DisplayVramStart & 0x3FF),
