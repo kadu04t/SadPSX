@@ -55,4 +55,54 @@ public sealed class ControllerInputStateTests
         Assert.Equal(0x80, controller.LeftX);
         Assert.Equal(0x80, controller.RightY);
     }
+
+    [Fact]
+    public void SwitchingControllerPreservesCurrentInputState()
+    {
+        var digitalController = new DigitalController();
+        var inputState = new ControllerInputState(digitalController);
+        inputState.SetKeyboardButton(ControllerButton.Start, pressed: true);
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x20);
+        var analogController = new AnalogController();
+
+        inputState.SetController(analogController);
+
+        Assert.True(analogController.IsPressed(ControllerButton.Start));
+        Assert.Equal(0x20, analogController.LeftX);
+        Assert.False(digitalController.IsPressed(ControllerButton.Start));
+    }
+
+    [Fact]
+    public void LeftStickAlsoDrivesDigitalDirectionalButtons()
+    {
+        var controller = new DigitalController();
+        var inputState = new ControllerInputState(controller);
+
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x20);
+        inputState.SetGamepadAxis(ControllerAxis.LeftY, 0xE0);
+
+        Assert.True(controller.IsPressed(ControllerButton.Left));
+        Assert.True(controller.IsPressed(ControllerButton.Down));
+        Assert.False(controller.IsPressed(ControllerButton.Right));
+        Assert.False(controller.IsPressed(ControllerButton.Up));
+
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x80);
+        inputState.SetGamepadAxis(ControllerAxis.LeftY, 0x80);
+
+        Assert.False(controller.IsPressed(ControllerButton.Left));
+        Assert.False(controller.IsPressed(ControllerButton.Down));
+    }
+
+    [Fact]
+    public void PhysicalDpadRemainsPressedWhenStickReturnsToCenter()
+    {
+        var controller = new DigitalController();
+        var inputState = new ControllerInputState(controller);
+        inputState.SetGamepadButton(ControllerButton.Left, pressed: true);
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x20);
+
+        inputState.SetGamepadAxis(ControllerAxis.LeftX, 0x80);
+
+        Assert.True(controller.IsPressed(ControllerButton.Left));
+    }
 }

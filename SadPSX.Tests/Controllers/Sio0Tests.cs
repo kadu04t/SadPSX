@@ -25,6 +25,14 @@ public sealed class Sio0Tests
     }
 
     [Fact]
+    public void PortOneStartsWithOriginalDigitalController()
+    {
+        var bus = new Bus();
+
+        Assert.IsType<DigitalController>(bus.Sio0.ControllerPort1);
+    }
+
+    [Fact]
     public void SerialPollReturnsControllerPacket()
     {
         var bus = CreateConfiguredBus();
@@ -60,7 +68,30 @@ public sealed class Sio0Tests
         Assert.Equal(0xFF, trace[0].Receive);
         Assert.Equal(0ul, trace[0].StartCycle);
         Assert.Equal(1088ul, trace[0].EndCycle);
-        Assert.Equal(1188ul, trace[0].AcknowledgeCycle);
+        Assert.Equal(1488ul, trace[0].AcknowledgeCycle);
+    }
+
+    [Fact]
+    public void ResetPreservesPhysicalControllerState()
+    {
+        var bus = CreateConfiguredBus();
+        bus.Sio0.ControllerPort1.SetButton(ControllerButton.Cross, true);
+
+        bus.Write16(Sio0.ControlAddress, 0x0040);
+        bus.Write16(Sio0.ModeAddress, 0x000D);
+        bus.Write16(Sio0.BaudAddress, 0x0088);
+        bus.Write16(Sio0.ControlAddress, 0x0003);
+
+        byte[] response =
+        [
+            Transfer(bus, 0x01),
+            Transfer(bus, 0x42),
+            Transfer(bus, 0x00),
+            Transfer(bus, 0x00),
+            Transfer(bus, 0x00),
+        ];
+
+        Assert.Equal([0xFF, 0x41, 0x5A, 0xFF, 0xBF], response);
     }
 
     [Fact]
@@ -74,7 +105,7 @@ public sealed class Sio0Tests
         Assert.False(bus.Sio0.DsrAsserted);
         Assert.False(bus.Sio0.InterruptRequest);
 
-        bus.Sio0.Tick(100);
+        bus.Sio0.Tick(400);
 
         Assert.True(bus.Sio0.InterruptRequest);
         Assert.True(bus.Sio0.DsrAsserted);
@@ -82,6 +113,10 @@ public sealed class Sio0Tests
                            (1 << (int)InterruptSource.Controller));
         Assert.NotEqual(0u, bus.Read32(Sio0.StatusAddress) & (1u << 9));
 
+        bus.Write16(Sio0.ControlAddress, 0x1013);
+        Assert.True(bus.Sio0.InterruptRequest);
+
+        bus.Sio0.Tick(100);
         bus.Write16(Sio0.ControlAddress, 0x1013);
         Assert.False(bus.Sio0.InterruptRequest);
     }
@@ -107,6 +142,33 @@ public sealed class Sio0Tests
         Assert.Equal(0x41, bus.Read8(Sio0.DataAddress));
         Assert.False(bus.Sio0.TransferHistory.First().Queued);
         Assert.True(bus.Sio0.TransferHistory.Last().Queued);
+    }
+
+    [Fact]
+    public void NextByteCanStartDuringAcknowledgePulse()
+    {
+        var bus = CreateConfiguredBus(control: 0x1003);
+        bus.Write8(Sio0.DataAddress, 0x01);
+        bus.Sio0.Tick(1488);
+
+        Assert.True(bus.Sio0.DsrAsserted);
+
+        bus.Write8(Sio0.DataAddress, 0x42);
+
+        Assert.True(bus.Sio0.TransferPending);
+        bus.Sio0.Tick(100);
+        Assert.False(bus.Sio0.DsrAsserted);
+        Assert.True(bus.Sio0.TransferPending);
+
+        bus.Sio0.Tick(988);
+
+        Assert.False(bus.Sio0.TransferPending);
+        Assert.Equal(2, bus.Sio0.ReceiveCount);
+        Assert.Equal(0xFF, bus.Read8(Sio0.DataAddress));
+        Assert.Equal(0x41, bus.Read8(Sio0.DataAddress));
+        Assert.Equal(
+            1488ul,
+            bus.Sio0.TransferHistory.Last().StartCycle);
     }
 
     [Fact]

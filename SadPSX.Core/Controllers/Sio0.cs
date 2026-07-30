@@ -19,7 +19,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private const ushort RxInterruptEnable = 1 << 11;
     private const ushort DsrInterruptEnable = 1 << 12;
     private const ushort PortSelect = 1 << 13;
-    private const uint AcknowledgeDelayCycles = 100;
+    private const uint AcknowledgeDelayCycles = 400;
     private const uint AcknowledgePulseCycles = 100;
     private const int MaximumTransferHistory = 512;
 
@@ -62,7 +62,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     {
         _interruptController = interruptController ??
             throw new ArgumentNullException(nameof(interruptController));
-        ControllerPort1 = new AnalogController();
+        ControllerPort1 = new DigitalController();
         MemoryCardPort1 = MemoryCard.CreateFormatted();
         Reset();
     }
@@ -112,8 +112,6 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
         _pendingMode = 0;
         _pendingBaud = 0;
         ResetPeripheralTransfers();
-        ControllerPort1.ReleaseAll();
-        ControllerPort2?.ReleaseAll();
     }
 
     public void ClearTransferHistory()
@@ -152,56 +150,71 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     public void Tick(uint cycles)
     {
+        if (cycles == 0)
+            return;
+
+        if (!_transferPending &&
+            !_transmitQueued &&
+            _acknowledgeDelayRemaining == 0 &&
+            _acknowledgeCyclesRemaining == 0)
+        {
+            _clockCycles += cycles;
+            return;
+        }
+
         uint cyclesRemaining = cycles;
         while (cyclesRemaining > 0)
         {
+            TryStartQueuedTransfer();
+
+            uint elapsed = cyclesRemaining;
+            bool hasActiveTimer = false;
             if (_transferPending)
             {
-                uint elapsed = Math.Min(
-                    cyclesRemaining,
-                    _transferCyclesRemaining);
-                cyclesRemaining -= elapsed;
-                _transferCyclesRemaining -= elapsed;
-                _clockCycles += elapsed;
-                if (_transferCyclesRemaining == 0)
-                {
-                    _transferPending = false;
-                    CompleteTransfer();
-                }
-                continue;
+                elapsed = Math.Min(elapsed, _transferCyclesRemaining);
+                hasActiveTimer = true;
             }
-
             if (_acknowledgeDelayRemaining > 0)
             {
-                uint elapsed = Math.Min(
-                    cyclesRemaining,
-                    _acknowledgeDelayRemaining);
-                cyclesRemaining -= elapsed;
-                _acknowledgeDelayRemaining -= elapsed;
-                _clockCycles += elapsed;
-                if (_acknowledgeDelayRemaining == 0)
-                    BeginAcknowledgePulse();
-                continue;
+                elapsed = Math.Min(elapsed, _acknowledgeDelayRemaining);
+                hasActiveTimer = true;
             }
-
             if (_acknowledgeCyclesRemaining > 0)
             {
-                uint elapsed = Math.Min(
-                    cyclesRemaining,
-                    _acknowledgeCyclesRemaining);
-                cyclesRemaining -= elapsed;
-                _acknowledgeCyclesRemaining -= elapsed;
-                _clockCycles += elapsed;
-                if (_acknowledgeCyclesRemaining == 0)
-                    TryStartQueuedTransfer();
-                continue;
+                elapsed = Math.Min(elapsed, _acknowledgeCyclesRemaining);
+                hasActiveTimer = true;
             }
 
-            if (!TryStartQueuedTransfer())
+            if (!hasActiveTimer)
             {
                 _clockCycles += cyclesRemaining;
                 break;
             }
+
+            bool transferCompletes =
+                _transferPending &&
+                _transferCyclesRemaining == elapsed;
+            bool acknowledgeDelayCompletes =
+                _acknowledgeDelayRemaining > 0 &&
+                _acknowledgeDelayRemaining == elapsed;
+
+            if (_transferPending)
+                _transferCyclesRemaining -= elapsed;
+            if (_acknowledgeDelayRemaining > 0)
+                _acknowledgeDelayRemaining -= elapsed;
+            if (_acknowledgeCyclesRemaining > 0)
+                _acknowledgeCyclesRemaining -= elapsed;
+
+            cyclesRemaining -= elapsed;
+            _clockCycles += elapsed;
+
+            if (transferCompletes)
+            {
+                _transferPending = false;
+                CompleteTransfer();
+            }
+            if (acknowledgeDelayCompletes)
+                BeginAcknowledgePulse();
         }
     }
 
@@ -392,7 +405,7 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
             return;
         }
 
-        if ((value & Acknowledge) != 0)
+        if ((value & Acknowledge) != 0 && !DsrAsserted)
             _interruptRequest = false;
 
         _control = (ushort)(value & 0x3F0F);
@@ -419,8 +432,6 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     private void StartTransfer(byte value)
     {
         if (_transferPending ||
-            _acknowledgeDelayRemaining > 0 ||
-            _acknowledgeCyclesRemaining > 0 ||
             (_control & (TxEnable | Dtr)) != (TxEnable | Dtr))
         {
             _queuedTransmitByte = value;
@@ -462,8 +473,6 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
     {
         if (!_transmitQueued ||
             _transferPending ||
-            _acknowledgeDelayRemaining > 0 ||
-            _acknowledgeCyclesRemaining > 0 ||
             (_control & (TxEnable | Dtr)) != (TxEnable | Dtr))
         {
             return false;
@@ -541,10 +550,16 @@ public sealed class Sio0 : IMmioDevice, IClockedDevice
 
     private uint ReadReceivePreview(int byteCount, int dequeueCount)
     {
-        byte[] values = _receiveFifo.Take(byteCount).ToArray();
         uint result = 0;
-        for (int index = 0; index < values.Length; index++)
-            result |= (uint)values[index] << (index * 8);
+        int byteIndex = 0;
+        foreach (byte value in _receiveFifo)
+        {
+            if (byteIndex >= byteCount)
+                break;
+
+            result |= (uint)value << (byteIndex * 8);
+            byteIndex++;
+        }
 
         int bytesToDequeue = Math.Min(dequeueCount, _receiveFifo.Count);
         for (int index = 0; index < bytesToDequeue; index++)

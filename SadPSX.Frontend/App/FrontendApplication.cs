@@ -34,6 +34,7 @@ internal sealed class FrontendApplication : IDisposable
     private int _presentedFrames;
     private bool _running = true;
     private bool _paused;
+    private bool _analogController;
 
     private FrontendApplication(FrontendOptions options)
     {
@@ -238,6 +239,8 @@ internal sealed class FrontendApplication : IDisposable
                     break;
             }
         }
+
+        _gamepadInput.Poll();
     }
 
     private void HandleControllerKey(SDL.Scancode scancode, bool pressed)
@@ -314,6 +317,14 @@ internal sealed class FrontendApplication : IDisposable
                 _diagnosticConsole.PrintMemoryCards();
                 break;
 
+            case SDL.Scancode.F7:
+                _diagnosticConsole.ToggleFullMmioTrace();
+                break;
+
+            case SDL.Scancode.F8:
+                ToggleControllerType();
+                break;
+
             case SDL.Scancode.F11:
                 _videoOutput.ToggleFullscreen();
                 break;
@@ -337,6 +348,20 @@ internal sealed class FrontendApplication : IDisposable
         _videoOutput.SetTitle(
             $"SadPSX | {state} | PC 0x{_machine.Cpu.Pc:X8} | " +
             $"{instructionsPerSecond / 1_000_000:0.00} MIPS");
+    }
+
+    private void ToggleControllerType()
+    {
+        IController controller = _analogController
+            ? new DigitalController()
+            : new AnalogController();
+        _analogController = !_analogController;
+        _machine.Bus.Sio0.AttachController(1, controller);
+        _controllerInput.SetController(controller);
+        Console.WriteLine(
+            _analogController
+                ? "Controle da porta 1: DualShock."
+                : "Controle da porta 1: digital.");
     }
 
     private void PrintStartup(FrontendOptions options)
@@ -379,6 +404,8 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("  F4      Exceções recentes");
         Console.WriteLine("  F5      Transações SIO0 recentes");
         Console.WriteLine("  F6      Comandos de memory card recentes");
+        Console.WriteLine("  F7      Alternar trace MMIO completo");
+        Console.WriteLine("  F8      Alternar controle Digital/DualShock");
         Console.WriteLine("  F11     Alternar tela cheia");
         Console.WriteLine("  Esc     Sair");
         Console.WriteLine();

@@ -163,10 +163,10 @@ public sealed class AnalogController : IController
             {
                 3 => (byte)_buttons,
                 4 => (byte)(_buttons >> 8),
-                5 when AnalogMode => RightX,
-                6 when AnalogMode => RightY,
-                7 when AnalogMode => LeftX,
-                8 when AnalogMode => LeftY,
+                5 when AnalogMode || _configurationMode => RightX,
+                6 when AnalogMode || _configurationMode => RightY,
+                7 when AnalogMode || _configurationMode => LeftX,
+                8 when AnalogMode || _configurationMode => LeftY,
                 _ => 0,
             };
         }

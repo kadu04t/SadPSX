@@ -47,6 +47,25 @@ public sealed class AnalogControllerTests
     }
 
     [Fact]
+    public void ConfigurationPollAlwaysReturnsAnalogAxes()
+    {
+        var controller = new AnalogController();
+        controller.SetAxis(ControllerAxis.RightX, 0x10);
+        controller.SetAxis(ControllerAxis.RightY, 0x20);
+        controller.SetAxis(ControllerAxis.LeftX, 0x30);
+        controller.SetAxis(ControllerAxis.LeftY, 0x40);
+        TransferPacket(controller, [0x01, 0x43, 0, 1, 0]);
+
+        byte[] response = TransferPacket(
+            controller,
+            [0x01, 0x42, 0, 0, 0, 0, 0, 0, 0]);
+
+        Assert.Equal(
+            [0xFF, 0xF3, 0x5A, 0xFF, 0xFF, 0x10, 0x20, 0x30, 0x40],
+            response);
+    }
+
+    [Fact]
     public void DigitalModeKeepsStandardFiveBytePacket()
     {
         var controller = new AnalogController();
