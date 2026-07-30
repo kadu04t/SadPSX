@@ -104,11 +104,21 @@ public sealed class RuntimeDiagnostics : IDisposable
     public IReadOnlyList<Sio0TransferTrace> CaptureSio0Transfers() =>
         _machine.Bus.Sio0.TransferHistory.ToArray();
 
+    public IReadOnlyList<MemoryCardDiagnosticEntry> CaptureMemoryCardCommands()
+    {
+        var entries = new List<MemoryCardDiagnosticEntry>();
+        AddMemoryCardCommands(entries, 1, _machine.Bus.Sio0.MemoryCardPort1);
+        AddMemoryCardCommands(entries, 2, _machine.Bus.Sio0.MemoryCardPort2);
+        return entries;
+    }
+
     public void Clear()
     {
         _exceptionCounts.Clear();
         _recentExceptions.Clear();
         _machine.Bus.Sio0.ClearTransferHistory();
+        _machine.Bus.Sio0.MemoryCardPort1?.ClearCommandHistory();
+        _machine.Bus.Sio0.MemoryCardPort2?.ClearCommandHistory();
     }
 
     public void Dispose()
@@ -135,7 +145,23 @@ public sealed class RuntimeDiagnostics : IDisposable
             UnexpectedExceptionOccurred?.Invoke(exception);
         }
     }
+
+    private static void AddMemoryCardCommands(
+        ICollection<MemoryCardDiagnosticEntry> entries,
+        int port,
+        MemoryCard? memoryCard)
+    {
+        if (memoryCard is null)
+            return;
+
+        foreach (MemoryCardCommandTrace trace in memoryCard.CommandHistory)
+            entries.Add(new MemoryCardDiagnosticEntry(port, trace));
+    }
 }
+
+public readonly record struct MemoryCardDiagnosticEntry(
+    int Port,
+    MemoryCardCommandTrace Trace);
 
 public readonly record struct RuntimeDiagnosticSnapshot(
     uint Pc,

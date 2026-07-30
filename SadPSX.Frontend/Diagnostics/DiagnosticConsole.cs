@@ -225,6 +225,45 @@ internal sealed class DiagnosticConsole : IDisposable
         }
     }
 
+    public void PrintMemoryCards(int maximumEntries = 32)
+    {
+        IReadOnlyList<MemoryCardDiagnosticEntry> commands =
+            _diagnostics.CaptureMemoryCardCommands();
+        WriteHeader("Comandos de memory card recentes");
+        if (commands.Count == 0)
+        {
+            WriteRaw("Nenhum comando concluído.");
+            return;
+        }
+
+        foreach (MemoryCardDiagnosticEntry entry in
+                 commands.TakeLast(maximumEntries))
+        {
+            MemoryCardCommandTrace trace = entry.Trace;
+            string command = trace.Command switch
+            {
+                0x52 => "READ ",
+                0x53 => "GETID",
+                0x57 => "WRITE",
+                _ => $"0x{trace.Command:X2}",
+            };
+            string sector = trace.Sector is ushort sectorValue
+                ? $"{sectorValue:D4}"
+                : "----";
+            string expectedChecksum = trace.ExpectedChecksum is byte expected
+                ? $"0x{expected:X2}"
+                : "----";
+            string receivedChecksum = trace.ReceivedChecksum is byte received
+                ? $"0x{received:X2}"
+                : "----";
+            WriteRaw(
+                $"P{entry.Port} #{trace.Sequence:D5} {command} " +
+                $"setor={sector} checksum={receivedChecksum}/{expectedChecksum} " +
+                $"final=0x{trace.Result:X2} " +
+                $"resultado={(trace.Success ? "ok" : "erro")}");
+        }
+    }
+
     public void Reset()
     {
         _diagnostics.Clear();
@@ -317,7 +356,10 @@ internal sealed class DiagnosticConsole : IDisposable
             FormatExceptionInstruction(exception) + ".");
 
         if (exception.Code == ExceptionCode.Breakpoint)
+        {
             PrintSio0(maximumEntries: 160);
+            PrintMemoryCards();
+        }
     }
 
     private static string FormatExceptionInstruction(

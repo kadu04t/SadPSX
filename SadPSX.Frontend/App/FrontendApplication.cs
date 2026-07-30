@@ -310,6 +310,10 @@ internal sealed class FrontendApplication : IDisposable
                 _diagnosticConsole.PrintSio0();
                 break;
 
+            case SDL.Scancode.F6:
+                _diagnosticConsole.PrintMemoryCards();
+                break;
+
             case SDL.Scancode.F11:
                 _videoOutput.ToggleFullscreen();
                 break;
@@ -374,6 +378,7 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("  F3      MMIO não tratado");
         Console.WriteLine("  F4      Exceções recentes");
         Console.WriteLine("  F5      Transações SIO0 recentes");
+        Console.WriteLine("  F6      Comandos de memory card recentes");
         Console.WriteLine("  F11     Alternar tela cheia");
         Console.WriteLine("  Esc     Sair");
         Console.WriteLine();

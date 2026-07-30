@@ -47,6 +47,14 @@ public sealed class MemoryCardTests
         Assert.Equal(0x00, response[138].Data);
         Assert.Equal(0x47, response[139].Data);
         Assert.False(response[139].Acknowledge);
+
+        MemoryCardCommandTrace trace = Assert.Single(memoryCard.CommandHistory);
+        Assert.Equal(0x52, trace.Command);
+        Assert.Equal((ushort)0, trace.Sector);
+        Assert.Equal((byte)0x00, trace.ExpectedChecksum);
+        Assert.Null(trace.ReceivedChecksum);
+        Assert.Equal(0x47, trace.Result);
+        Assert.True(trace.Success);
     }
 
     [Fact]
@@ -70,6 +78,13 @@ public sealed class MemoryCardTests
             memoryCard.ExportImage()
                 .AsSpan(4 * MemoryCard.SectorSize, MemoryCard.SectorSize)
                 .ToArray());
+
+        MemoryCardCommandTrace trace = Assert.Single(memoryCard.CommandHistory);
+        Assert.Equal(0x57, trace.Command);
+        Assert.Equal((ushort)4, trace.Sector);
+        Assert.Equal(trace.ExpectedChecksum, trace.ReceivedChecksum);
+        Assert.Equal(0x47, trace.Result);
+        Assert.True(trace.Success);
     }
 
     [Fact]
@@ -87,6 +102,11 @@ public sealed class MemoryCardTests
 
         Assert.Equal(0x4E, response[^1].Data);
         Assert.Equal(before, memoryCard.ExportImage());
+
+        MemoryCardCommandTrace trace = Assert.Single(memoryCard.CommandHistory);
+        Assert.NotEqual(trace.ExpectedChecksum, trace.ReceivedChecksum);
+        Assert.Equal(0x4E, trace.Result);
+        Assert.False(trace.Success);
     }
 
     [Fact]

@@ -310,6 +310,7 @@ Atalhos de diagnóstico:
 - `F3`: acessos MMIO ainda não implementados.
 - `F4`: exceções recentes da CPU.
 - `F5`: transações recentes do SIO0 com controles e memory cards.
+- `F6`: comandos concluídos do memory card, setores, checksums e resultados.
 
 A entrada dos controles digital e analógico usa:
 

@@ -5,9 +5,12 @@ public sealed class MemoryCard : ISioPeripheral
     public const int SectorSize = 128;
     public const int SectorCount = 1024;
     public const int ImageSize = SectorSize * SectorCount;
+    private const int MaximumCommandHistory = 128;
 
     private readonly byte[] _data;
     private readonly byte[] _writeBuffer = new byte[SectorSize];
+    private readonly Queue<MemoryCardCommandTrace> _commandHistory =
+        new(MaximumCommandHistory);
 
     private int _transferIndex;
     private byte _command;
@@ -15,8 +18,10 @@ public sealed class MemoryCard : ISioPeripheral
     private byte _addressLsb;
     private byte _previousByte;
     private byte _writeChecksum;
+    private byte _receivedWriteChecksum;
     private byte _writeStatus;
     private bool _selected;
+    private ulong _commandSequence;
 
     private MemoryCard(byte[] data, string? backingPath)
     {
@@ -28,6 +33,8 @@ public sealed class MemoryCard : ISioPeripheral
     public bool IsDirty { get; private set; }
     public string? LastPersistenceError { get; private set; }
     public byte Flag { get; private set; } = 0x08;
+    public IReadOnlyCollection<MemoryCardCommandTrace> CommandHistory =>
+        _commandHistory;
 
     public static MemoryCard CreateFormatted(string? backingPath = null)
     {
@@ -95,8 +102,14 @@ public sealed class MemoryCard : ISioPeripheral
         _addressLsb = 0;
         _previousByte = 0;
         _writeChecksum = 0;
+        _receivedWriteChecksum = 0;
         _writeStatus = 0xFF;
         _selected = false;
+    }
+
+    public void ClearCommandHistory()
+    {
+        _commandHistory.Clear();
     }
 
     public ControllerTransferResult Transfer(byte value)
@@ -113,6 +126,8 @@ public sealed class MemoryCard : ISioPeripheral
         {
             _command = value;
             bool accepted = value is 0x52 or 0x53 or 0x57;
+            if (!accepted)
+                RecordCommand(null, null, null, 0xFF, success: false);
             _transferIndex = accepted ? 2 : 0;
             _previousByte = value;
             return new ControllerTransferResult(Flag, accepted);
@@ -164,6 +179,15 @@ public sealed class MemoryCard : ISioPeripheral
             case 9:
                 response = IsAddressValid() ? _addressLsb : (byte)0xFF;
                 acknowledge = IsAddressValid();
+                if (!acknowledge)
+                {
+                    RecordCommand(
+                        (ushort)SectorAddress(),
+                        null,
+                        null,
+                        response,
+                        success: false);
+                }
                 break;
             case >= 10 and < 10 + SectorSize:
                 response = ReadSectorByte(_transferIndex - 10);
@@ -174,6 +198,12 @@ public sealed class MemoryCard : ISioPeripheral
             default:
                 response = 0x47;
                 acknowledge = false;
+                RecordCommand(
+                    (ushort)SectorAddress(),
+                    CalculateSectorChecksum(),
+                    null,
+                    response,
+                    success: true);
                 break;
         }
 
@@ -212,6 +242,7 @@ public sealed class MemoryCard : ISioPeripheral
                 break;
             case 6 + SectorSize:
                 response = _previousByte;
+                _receivedWriteChecksum = value;
                 _writeStatus = CommitWrite(value);
                 break;
             case 7 + SectorSize:
@@ -223,6 +254,12 @@ public sealed class MemoryCard : ISioPeripheral
             default:
                 response = _writeStatus;
                 acknowledge = false;
+                RecordCommand(
+                    (ushort)SectorAddress(),
+                    _writeChecksum,
+                    _receivedWriteChecksum,
+                    response,
+                    success: response == 0x47);
                 break;
         }
 
@@ -240,7 +277,29 @@ public sealed class MemoryCard : ISioPeripheral
         byte value = response[responseIndex];
         if (acknowledge)
             _transferIndex++;
+        else
+            RecordCommand(null, null, null, value, success: true);
         return new ControllerTransferResult(value, acknowledge);
+    }
+
+    private void RecordCommand(
+        ushort? sector,
+        byte? expectedChecksum,
+        byte? receivedChecksum,
+        byte result,
+        bool success)
+    {
+        if (_commandHistory.Count == MaximumCommandHistory)
+            _commandHistory.Dequeue();
+
+        _commandHistory.Enqueue(new MemoryCardCommandTrace(
+            ++_commandSequence,
+            _command,
+            sector,
+            expectedChecksum,
+            receivedChecksum,
+            result,
+            success));
     }
 
     private byte CommitWrite(byte receivedChecksum)
