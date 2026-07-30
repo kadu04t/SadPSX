@@ -60,6 +60,18 @@ procedure](docs/COMPATIBILITY.md) for test limitations and the next retests.
 
 <p align="center"><em>Rayman running in SadPSX during a compatibility test.</em></p>
 
+<p align="center">
+  <img src="docs/screenshots/silent-hill-gameplay.png" alt="Silent Hill running in SadPSX" width="900">
+</p>
+
+<p align="center"><em>Silent Hill reaching in-game rendering, with accuracy issues still visible.</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/final-fantasy-vii-battle.png" alt="Final Fantasy VII battle running in SadPSX" width="900">
+</p>
+
+<p align="center"><em>Final Fantasy VII running a playable battle in SadPSX.</em></p>
+
 ## Implemented Components
 
 ### CPU

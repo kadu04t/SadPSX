@@ -71,6 +71,18 @@ próximos retestes.
 
 <p align="center"><em>Rayman executando no SadPSX durante um teste de compatibilidade.</em></p>
 
+<p align="center">
+  <img src="docs/screenshots/silent-hill-gameplay.png" alt="Silent Hill executando no SadPSX" width="900">
+</p>
+
+<p align="center"><em>Silent Hill chegando à renderização in-game, ainda com problemas visíveis de precisão.</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/final-fantasy-vii-battle.png" alt="Batalha de Final Fantasy VII executando no SadPSX" width="900">
+</p>
+
+<p align="center"><em>Final Fantasy VII executando uma batalha jogável no SadPSX.</em></p>
+
 ## Componentes implementados
 
 ### CPU
