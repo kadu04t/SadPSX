@@ -75,6 +75,7 @@ recent SIO0 transactions, and recent memory-card commands in the log.
 3. **Rayman:** save, restart, and reload the same card to verify persistence
    across emulator sessions.
 
-Performance optimization is intentionally tracked as a separate future block.
-Compatibility results should be captured before and after that work so timing
-or rendering regressions remain visible.
+The performance block now includes a reproducible benchmark, RAM fast paths,
+lower idle-device overhead, and separate normal/full diagnostic modes.
+Compatibility results should still be captured before and after performance
+changes so timing or rendering regressions remain visible.

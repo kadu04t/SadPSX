@@ -325,6 +325,7 @@ Diagnostic shortcuts:
 - `F4`: Recent CPU exceptions.
 - `F5`: Recent SIO0 controller and memory-card transactions.
 - `F6`: Completed memory-card commands, sectors, checksums, and results.
+- `F7`: Toggle full handled-MMIO tracing. This can reduce performance.
 
 Logs are written to the `Logs/` directory next to the executable.
 
@@ -353,8 +354,17 @@ dotnet run -c Release --project SadPSX.Cli -- `
 ```
 
 Without an instruction count, the CLI executes 100 instructions. Use `--trace`
-to print every executed instruction; otherwise, it retains only a rolling trace
-shown at the end.
+to print and retain executed instructions. Normal CLI execution skips
+disassembly and trace allocation.
+
+Run the dependency-free performance benchmark in Release mode:
+
+```powershell
+dotnet run -c Release --project SadPSX.Benchmarks -- 10000000
+```
+
+It reports CPU loops from BIOS and RAM, full-machine timing, and paired RAM
+reads/writes. Compare results using the same configuration and machine.
 
 ### Diagnostic CLI
 

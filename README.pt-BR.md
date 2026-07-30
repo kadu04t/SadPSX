@@ -329,6 +329,7 @@ Atalhos de diagnóstico:
 - `F4`: exceções recentes da CPU.
 - `F5`: transações recentes do SIO0 com controles e memory cards.
 - `F6`: comandos concluídos do memory card, setores, checksums e resultados.
+- `F7`: alterna o trace completo de MMIO tratado, que pode reduzir o desempenho.
 
 A entrada dos controles digital e analógico usa:
 
@@ -374,8 +375,18 @@ Para imprimir todas as instruções executadas:
 dotnet run --project SadPSX.Cli -- caminho\para\BIOS.BIN 1000 --trace
 ```
 
-Sem `--trace`, a CLI mantém um buffer e mostra apenas as últimas instruções ao
-final da execução.
+Sem `--trace`, a CLI não desmonta nem armazena cada instrução, reduzindo o custo
+da execução normal.
+
+O benchmark de desempenho não possui dependências externas e deve ser executado
+em Release:
+
+```powershell
+dotnet run -c Release --project SadPSX.Benchmarks -- 10000000
+```
+
+Ele mede loops da CPU na BIOS e na RAM, a máquina completa com timing e pares
+de leitura/escrita na RAM. Compare resultados na mesma configuração e máquina.
 
 ### Ferramentas de diagnóstico
 
