@@ -102,6 +102,27 @@ public sealed class Bus
 
     public byte Read8(uint address)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            byte ramValue = Ram.Read8(physicalAddress & (RamSize - 1));
+            if (MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    MemoryAccessKind.Read,
+                    1,
+                    ramValue);
+            }
+            return ramValue;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         byte value = region switch
         {
@@ -120,6 +141,27 @@ public sealed class Bus
 
     public void Write8(uint address, byte value)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            Ram.Write8(physicalAddress & (RamSize - 1), value);
+            if (MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    MemoryAccessKind.Write,
+                    1,
+                    value);
+            }
+            return;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
@@ -137,6 +179,27 @@ public sealed class Bus
 
     public ushort Read16(uint address)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            ushort ramValue = Ram.Read16(physicalAddress & (RamSize - 1));
+            if (MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    MemoryAccessKind.Read,
+                    2,
+                    ramValue);
+            }
+            return ramValue;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         ushort value = region switch
         {
@@ -155,6 +218,27 @@ public sealed class Bus
 
     public void Write16(uint address, ushort value)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            Ram.Write16(physicalAddress & (RamSize - 1), value);
+            if (MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    MemoryAccessKind.Write,
+                    2,
+                    value);
+            }
+            return;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
@@ -177,7 +261,61 @@ public sealed class Bus
 
     public uint ReadInstruction32(uint address)
     {
-        return Read32Core(address, MemoryAccessKind.InstructionFetch, notifyAccess: true);
+        return ReadInstruction32(address, out _);
+    }
+
+    public uint ReadInstruction32(uint address, out uint accessCycles)
+    {
+        uint topThreeBits = address >> 29;
+        MemorySegment segment = topThreeBits switch
+        {
+            <= 3 => MemorySegment.Kuseg,
+            4 => MemorySegment.Kseg0,
+            5 => MemorySegment.Kseg1,
+            _ => MemorySegment.Kseg2,
+        };
+        uint physicalAddress = segment is MemorySegment.Kseg0 or
+            MemorySegment.Kseg1
+                ? address & 0x1FFF_FFFF
+                : address;
+
+        if (physicalAddress < RamMirroredWindowSize)
+        {
+            accessCycles = topThreeBits == 5 ? 7u : 1u;
+            uint offset = physicalAddress & (RamSize - 1);
+            uint value = Ram.Read32(offset);
+            NotifyAccess(
+                address,
+                segment,
+                MemoryRegion.Ram,
+                MemoryAccessKind.InstructionFetch,
+                4,
+                value);
+            return value;
+        }
+
+        if (physicalAddress >= BiosBase &&
+            physicalAddress < BiosBase + BiosSize)
+        {
+            accessCycles = 29;
+            uint value = Bios.Read32(physicalAddress - BiosBase);
+            NotifyAccess(
+                address,
+                segment,
+                MemoryRegion.Bios,
+                MemoryAccessKind.InstructionFetch,
+                4,
+                value);
+            return value;
+        }
+
+        accessCycles = EstimateAccessCycles(
+            address,
+            MemoryAccessKind.InstructionFetch);
+        return Read32Core(
+            address,
+            MemoryAccessKind.InstructionFetch,
+            notifyAccess: true);
     }
 
     public uint Peek32(uint address)
@@ -190,6 +328,27 @@ public sealed class Bus
         MemoryAccessKind kind,
         bool notifyAccess)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            uint ramValue = Ram.Read32(physicalAddress & (RamSize - 1));
+            if (notifyAccess && MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    kind,
+                    4,
+                    ramValue);
+            }
+            return ramValue;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         uint value = region switch
         {
@@ -212,6 +371,27 @@ public sealed class Bus
 
     public void Write32(uint address, uint value)
     {
+        uint topThreeBits = address >> 29;
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (topThreeBits <= 5 &&
+            physicalAddress < RamMirroredWindowSize)
+        {
+            Ram.Write32(physicalAddress & (RamSize - 1), value);
+            if (MemoryAccessed is not null)
+            {
+                NotifyAccess(
+                    address,
+                    SegmentFromTopBits(topThreeBits),
+                    MemoryRegion.Ram,
+                    MemoryAccessKind.Write,
+                    4,
+                    value);
+            }
+            return;
+        }
+
         var (region, offset) = Route(address, out MemorySegment segment);
         switch (region)
         {
@@ -229,24 +409,42 @@ public sealed class Bus
 
     public uint EstimateAccessCycles(uint address, MemoryAccessKind kind)
     {
-        var (region, _) = Route(address, out MemorySegment segment);
-
         if (kind == MemoryAccessKind.Write)
             return 1;
 
-        return region switch
+        uint topThreeBits = address >> 29;
+        if (topThreeBits >= 6)
         {
-            MemoryRegion.Ram
-                when kind == MemoryAccessKind.InstructionFetch &&
-                     segment is MemorySegment.Kuseg or MemorySegment.Kseg0 => 1,
-            MemoryRegion.Ram => 7,
-            MemoryRegion.Scratchpad => 1,
-            MemoryRegion.Mmio => 5,
-            MemoryRegion.Bios => 29,
-            MemoryRegion.Expansion1 => 5,
-            MemoryRegion.CacheControl => 5,
-            _ => 1,
-        };
+            return address >= CacheControlBase &&
+                   address < CacheControlBase + CacheControlSize
+                ? 5u
+                : 1u;
+        }
+
+        uint physicalAddress = topThreeBits is 4 or 5
+            ? address & 0x1FFF_FFFF
+            : address;
+        if (physicalAddress < RamMirroredWindowSize)
+        {
+            return kind == MemoryAccessKind.InstructionFetch &&
+                   topThreeBits != 5
+                ? 1u
+                : 7u;
+        }
+
+        if (physicalAddress >= ScratchpadBase &&
+            physicalAddress < ScratchpadBase + ScratchpadSize)
+        {
+            return 1;
+        }
+
+        if (physicalAddress >= BiosBase &&
+            physicalAddress < BiosBase + BiosSize)
+        {
+            return 29;
+        }
+
+        return 5;
     }
 
     private void NotifyAccess(
@@ -304,6 +502,15 @@ public sealed class Bus
         }
     }
 
+    private static MemorySegment SegmentFromTopBits(uint topThreeBits) =>
+        topThreeBits switch
+        {
+            <= 3 => MemorySegment.Kuseg,
+            4 => MemorySegment.Kseg0,
+            5 => MemorySegment.Kseg1,
+            _ => MemorySegment.Kseg2,
+        };
+
     private (MemoryRegion Region, uint Offset) Route(uint virtualAddress, out MemorySegment segment)
     {
         uint physical = TranslateToPhysical(virtualAddress, out segment);
@@ -319,7 +526,7 @@ public sealed class Bus
         }
 
         if (physical < RamMirroredWindowSize)
-            return (MemoryRegion.Ram, physical % RamSize);
+            return (MemoryRegion.Ram, physical & (RamSize - 1));
 
         if (physical >= Expansion1Base && physical < Expansion1Base + Expansion1Size)
             return (MemoryRegion.Expansion1, physical - Expansion1Base);
@@ -414,4 +621,5 @@ public readonly record struct MemoryAccess(
                $"V=0x{VirtualAddress:X8} P=0x{PhysicalAddress:X8} " +
                $"Value=0x{Value:X8} Region={Region}";
     }
+
 }

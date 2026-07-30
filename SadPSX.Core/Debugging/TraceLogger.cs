@@ -24,12 +24,13 @@ namespace SadPSX.Core.Debugging;
 public sealed class TraceLogger
 {
     private readonly PsxMachine _machine;
+    private readonly TraceEntryBuffer _entries = new();
 
     /// <summary>
     /// Lista de linhas de trace acumuladas desde a criação (ou desde o
     /// último <see cref="Clear"/>). Cada Step() adiciona uma entrada.
     /// </summary>
-    public List<TraceEntry> Entries { get; } = new();
+    public IReadOnlyList<TraceEntry> Entries => _entries;
 
     /// <summary>
     /// Se definido, cada linha de trace também é escrita aqui em tempo
@@ -44,7 +45,11 @@ public sealed class TraceLogger
     /// simples), para evitar consumo de memória ilimitado em traces longos.
     /// Null desativa o limite.
     /// </summary>
-    public int? MaxEntries { get; set; }
+    public int? MaxEntries
+    {
+        get => _entries.Capacity;
+        set => _entries.Capacity = value;
+    }
 
     public TraceLogger(PsxMachine machine)
     {
@@ -115,14 +120,11 @@ public sealed class TraceLogger
         return false;
     }
 
-    public void Clear() => Entries.Clear();
+    public void Clear() => _entries.Clear();
 
     private void RecordEntry(TraceEntry entry)
     {
-        Entries.Add(entry);
-
-        if (MaxEntries is int max && Entries.Count > max)
-            Entries.RemoveAt(0);
+        _entries.Add(entry);
 
         Output?.WriteLine(entry.ToString());
     }

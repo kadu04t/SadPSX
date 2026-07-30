@@ -19,12 +19,12 @@ public sealed class ExecutionDebugger : IDisposable
     private readonly HashSet<uint> _reachedCheckpointAddresses = new();
     private MemoryAccess? _pendingMemoryBreakpoint;
     private bool _executingStep;
+    private bool _memoryAccessSubscribed;
     private bool _disposed;
 
     public ExecutionDebugger(PsxMachine machine)
     {
         _machine = machine ?? throw new ArgumentNullException(nameof(machine));
-        _machine.Bus.MemoryAccessed += OnMemoryAccessed;
     }
 
     public HashSet<uint> PcBreakpoints { get; } = new();
@@ -46,25 +46,28 @@ public sealed class ExecutionDebugger : IDisposable
             return false;
 
         uint pc = _machine.Cpu.Pc;
-        RecordCheckpoint(pc);
+        UpdateMemoryAccessSubscription();
+        if (Checkpoints.Count != 0)
+            RecordCheckpoint(pc);
 
-        if (PcBreakpoints.Contains(pc))
+        if (PcBreakpoints.Count != 0 && PcBreakpoints.Contains(pc))
         {
             Stop(DebuggerStopKind.PcBreakpoint, $"Breakpoint de PC em 0x{pc:X8}.");
             return false;
         }
 
-        ulong visits = _pcVisitCounts.GetValueOrDefault(pc) + 1;
-        _pcVisitCounts[pc] = visits;
-
         if (LoopVisitThreshold is int threshold &&
-            threshold > 0 &&
-            visits >= (ulong)threshold)
+            threshold > 0)
         {
-            Stop(
-                DebuggerStopKind.LoopDetected,
-                $"Possível loop: PC 0x{pc:X8} visitado {visits} vezes.");
-            return false;
+            ulong visits = _pcVisitCounts.GetValueOrDefault(pc) + 1;
+            _pcVisitCounts[pc] = visits;
+            if (visits >= (ulong)threshold)
+            {
+                Stop(
+                    DebuggerStopKind.LoopDetected,
+                    $"Possível loop: PC 0x{pc:X8} visitado {visits} vezes.");
+                return false;
+            }
         }
 
         _pendingMemoryBreakpoint = null;
@@ -156,7 +159,8 @@ public sealed class ExecutionDebugger : IDisposable
         if (_disposed)
             return;
 
-        _machine.Bus.MemoryAccessed -= OnMemoryAccessed;
+        if (_memoryAccessSubscribed)
+            _machine.Bus.MemoryAccessed -= OnMemoryAccessed;
         _disposed = true;
     }
 
@@ -194,6 +198,19 @@ public sealed class ExecutionDebugger : IDisposable
         {
             _pendingMemoryBreakpoint ??= access;
         }
+    }
+
+    private void UpdateMemoryAccessSubscription()
+    {
+        bool shouldSubscribe = MemoryBreakpoints.Count != 0;
+        if (shouldSubscribe == _memoryAccessSubscribed)
+            return;
+
+        if (shouldSubscribe)
+            _machine.Bus.MemoryAccessed += OnMemoryAccessed;
+        else
+            _machine.Bus.MemoryAccessed -= OnMemoryAccessed;
+        _memoryAccessSubscribed = shouldSubscribe;
     }
 
     private void Stop(

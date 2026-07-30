@@ -9,9 +9,13 @@ public sealed class TimingScheduler
         _events = new();
 
     private ulong _eventSequence;
+    private IClockedDevice[] _deviceSnapshot = [];
+    private Action<uint>? _primaryTicker;
+    private int _primaryDeviceCount;
 
     public ulong ClockCycles { get; private set; }
-    public int RegisteredDeviceCount => _devices.Count;
+    public int RegisteredDeviceCount =>
+        _primaryDeviceCount + _devices.Count;
     public int PendingEventCount => _events.UnorderedItems.Count(
         item => item.Element.IsPending);
 
@@ -23,7 +27,23 @@ public sealed class TimingScheduler
             return false;
 
         _devices.Add(device);
+        _deviceSnapshot = [.. _devices];
         return true;
+    }
+
+    internal void SetPrimaryTicker(Action<uint> ticker, int deviceCount)
+    {
+        ArgumentNullException.ThrowIfNull(ticker);
+        if (deviceCount <= 0)
+            throw new ArgumentOutOfRangeException(nameof(deviceCount));
+        if (_primaryTicker is not null)
+        {
+            throw new InvalidOperationException(
+                "A primary timing ticker is already configured.");
+        }
+
+        _primaryTicker = ticker;
+        _primaryDeviceCount = deviceCount;
     }
 
     public TimingEvent Schedule(uint delayCycles, Action callback)
@@ -44,6 +64,12 @@ public sealed class TimingScheduler
     {
         if (cycles == 0)
             return;
+
+        if (_events.Count == 0)
+        {
+            TickDevices(cycles);
+            return;
+        }
 
         ulong targetCycle = checked(ClockCycles + cycles);
         while (_events.TryPeek(out TimingEvent? timingEvent, out var priority) &&
@@ -66,9 +92,12 @@ public sealed class TimingScheduler
             return;
 
         ClockCycles += cycles;
-        int deviceCount = _devices.Count;
+        _primaryTicker?.Invoke(cycles);
+
+        IClockedDevice[] devices = _deviceSnapshot;
+        int deviceCount = devices.Length;
         for (int index = 0; index < deviceCount; index++)
-            _devices[index].Tick(cycles);
+            devices[index].Tick(cycles);
     }
 
     public void ResetClock()

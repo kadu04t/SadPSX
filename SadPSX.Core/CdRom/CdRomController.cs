@@ -160,6 +160,13 @@ public sealed class CdRomController : IMmioDevice, IClockedDevice
     public void Tick(uint cycles)
     {
         _clockCycles += cycles;
+        if (!_commandBusy &&
+            !_reading &&
+            !_playing &&
+            _responses.Count == 0)
+        {
+            return;
+        }
 
         if (_commandBusy && _interruptFlags == 0)
         {

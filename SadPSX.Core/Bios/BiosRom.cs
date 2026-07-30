@@ -55,5 +55,5 @@ public sealed class BiosRom
     // silenciosamente ignoradas pelo hardware real (a região é mapeada
     // como ROM). Não há métodos Write* propositalmente.
 
-    private static uint Mask(uint offset) => offset % SizeInBytes;
+    private static uint Mask(uint offset) => offset & (SizeInBytes - 1);
 }

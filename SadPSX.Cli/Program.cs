@@ -117,6 +117,8 @@ if (discPath is not null && !File.Exists(discPath))
 }
 
 var machine = new PsxMachine();
+if (showMmioLog)
+    machine.Bus.Mmio.TraceMode = MmioTraceMode.Full;
 
 try
 {
@@ -147,11 +149,13 @@ if (validate)
     return result.Succeeded ? 0 : 1;
 }
 
-var tracer = new TraceLogger(machine)
-{
-    Output = trace ? Console.Out : null,
-    MaxEntries = 1000,
-};
+TraceLogger? tracer = trace
+    ? new TraceLogger(machine)
+    {
+        Output = Console.Out,
+        MaxEntries = 1000,
+    }
+    : null;
 
 using var debugger = new ExecutionDebugger(machine)
 {
@@ -168,7 +172,9 @@ Exception? failure = null;
 
 try
 {
-    executed = debugger.Run(stepCount, tracer.Step);
+    executed = debugger.Run(
+        stepCount,
+        tracer is null ? machine.Step : tracer.Step);
 }
 catch (Exception exception)
 {
@@ -204,19 +210,10 @@ if (failure is not null)
         $"Execução interrompida por exceção: " +
         $"{failure.GetType().Name}: {failure.Message}");
 
-    if (!trace && tracer.Entries.Count > 0)
+    if (tracer is not null && tracer.Entries.Count > 0)
         Console.Error.WriteLine($"Última instrução traceada: {tracer.Entries[^1]}");
 
     return 1;
-}
-
-if (!trace)
-{
-    Console.WriteLine();
-    Console.WriteLine("Últimas instruções executadas:");
-    int start = Math.Max(0, tracer.Entries.Count - 10);
-    for (int index = start; index < tracer.Entries.Count; index++)
-        Console.WriteLine(tracer.Entries[index]);
 }
 
 return 0;

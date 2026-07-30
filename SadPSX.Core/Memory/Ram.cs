@@ -54,5 +54,5 @@ public sealed class Ram
     // Por enquanto, sem mirroring (0x0080_0000 / 0x0100_0000):
     // apenas dobra o endereço dentro do tamanho físico da RAM.
     // Isso será revisitado quando o Bus tratar as regiões do mapa de memória do PS1.
-    private static uint Mask(uint address) => address % SizeInBytes;
+    private static uint Mask(uint address) => address & (SizeInBytes - 1);
 }

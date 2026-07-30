@@ -1,3 +1,4 @@
+using SadPSX.Core.Bus;
 using SadPSX.Core.Interrupts;
 using Xunit;
 using Bus = SadPSX.Core.Bus.Bus;
@@ -48,6 +49,7 @@ public sealed class InterruptControllerTests
     public void RegistersRoundTripThroughBusAndAreLoggedAsHandled()
     {
         var bus = new Bus();
+        bus.Mmio.TraceMode = MmioTraceMode.Full;
 
         bus.Write16(InterruptController.MaskAddress, 0xFFFF);
         ushort mask = bus.Read16(InterruptController.MaskAddress);

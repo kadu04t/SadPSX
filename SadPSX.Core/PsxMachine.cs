@@ -143,12 +143,17 @@ public sealed class PsxMachine
 
     private void RegisterDefaultClockedDevices()
     {
-        Timing.Register(Bus.VideoTiming);
-        Timing.Register(Bus.RootCounters);
-        Timing.Register(Bus.CdRom);
-        Timing.Register(Bus.Spu);
-        Timing.Register(Bus.Sio0);
-        Timing.Register(Bus.Gpu);
-        Timing.Register(Bus.Dma);
+        Timing.SetPrimaryTicker(TickDefaultClockedDevices, deviceCount: 7);
+    }
+
+    private void TickDefaultClockedDevices(uint cycles)
+    {
+        Bus.VideoTiming.Tick(cycles);
+        Bus.RootCounters.Tick(cycles);
+        Bus.CdRom.Tick(cycles);
+        Bus.Spu.Tick(cycles);
+        Bus.Sio0.Tick(cycles);
+        Bus.Gpu.Tick(cycles);
+        Bus.Dma.Tick(cycles);
     }
 }

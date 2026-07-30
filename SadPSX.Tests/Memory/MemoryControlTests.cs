@@ -61,6 +61,7 @@ public sealed class MemoryControlTests
     public void MmioLogKeepsFirstAccessesAndAggregatesCounts()
     {
         var bus = new Bus();
+        bus.Mmio.TraceMode = MmioTraceMode.Full;
 
         bus.Write32(MemoryControl.RamSizeAddress, 0x0000_0B88);
         bus.Read32(MemoryControl.RamSizeAddress);
@@ -77,6 +78,20 @@ public sealed class MemoryControlTests
         Assert.Equal(2ul, unhandledReads.Count);
         Assert.False(unhandledReads.Handled);
         Assert.Equal("UNHANDLED", unhandledReads.RegisterName);
+    }
+
+    [Fact]
+    public void DefaultMmioTraceOnlyCapturesUnhandledAccesses()
+    {
+        var bus = new Bus();
+
+        bus.Read32(MemoryControl.RamSizeAddress);
+        bus.Read32(0x1F80_1050);
+
+        Assert.Equal(2ul, bus.Mmio.TotalAccessCount);
+        MmioAccess access = Assert.Single(bus.Mmio.AccessLog);
+        Assert.False(access.Handled);
+        Assert.Single(bus.Mmio.AccessSummaries);
     }
 
     [Fact]

@@ -59,5 +59,5 @@ public sealed class Scratchpad
     // Sem espelhamento: um acesso fora dos 1024 bytes é um erro de mapa de
     // memória de quem chamou (o Bus nunca deveria repassar um offset fora
     // desse intervalo). Usamos módulo mesmo assim por defesa, igual à RAM.
-    private static uint Mask(uint offset) => offset % SizeInBytes;
+    private static uint Mask(uint offset) => offset & (SizeInBytes - 1);
 }

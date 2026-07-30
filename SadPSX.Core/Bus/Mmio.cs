@@ -84,6 +84,8 @@ public sealed class Mmio
     public uint? LastUnhandledReadAddress { get; private set; }
     public uint? LastUnhandledWriteAddress { get; private set; }
     public int MaxLoggedAccesses { get; set; } = 256;
+    public MmioTraceMode TraceMode { get; set; } =
+        MmioTraceMode.UnhandledOnly;
     public ulong TotalAccessCount => _accessSequence;
     public IReadOnlyList<MmioAccess> AccessLog => _accessLog;
     public IReadOnlyCollection<MmioAccessSummary> AccessSummaries => _accessSummaries.Values;
@@ -99,7 +101,7 @@ public sealed class Mmio
         if (!handled)
             LastUnhandledReadAddress = address;
 
-        Record(address, MemoryAccessKind.Read, 1, value, handled);
+        Record(device, address, MemoryAccessKind.Read, 1, value);
         return value;
     }
 
@@ -113,7 +115,7 @@ public sealed class Mmio
         else
             LastUnhandledWriteAddress = address;
 
-        Record(address, MemoryAccessKind.Write, 1, value, handled);
+        Record(device, address, MemoryAccessKind.Write, 1, value);
     }
 
     public ushort Read16(uint address)
@@ -125,7 +127,7 @@ public sealed class Mmio
         if (!handled)
             LastUnhandledReadAddress = address;
 
-        Record(address, MemoryAccessKind.Read, 2, value, handled);
+        Record(device, address, MemoryAccessKind.Read, 2, value);
         return value;
     }
 
@@ -139,7 +141,7 @@ public sealed class Mmio
         else
             LastUnhandledWriteAddress = address;
 
-        Record(address, MemoryAccessKind.Write, 2, value, handled);
+        Record(device, address, MemoryAccessKind.Write, 2, value);
     }
 
     public uint Read32(uint address)
@@ -151,7 +153,7 @@ public sealed class Mmio
         if (!handled)
             LastUnhandledReadAddress = address;
 
-        Record(address, MemoryAccessKind.Read, 4, value, handled);
+        Record(device, address, MemoryAccessKind.Read, 4, value);
         return value;
     }
 
@@ -170,7 +172,7 @@ public sealed class Mmio
         else
             LastUnhandledWriteAddress = address;
 
-        Record(address, MemoryAccessKind.Write, 4, value, handled);
+        Record(device, address, MemoryAccessKind.Write, 4, value);
     }
 
     private IMmioDevice? FindDevice(uint address)
@@ -194,15 +196,20 @@ public sealed class Mmio
     }
 
     private void Record(
+        IMmioDevice? device,
         uint address,
         MemoryAccessKind kind,
         int width,
-        uint value,
-        bool handled)
+        uint value)
     {
         _accessSequence++;
-        string registerName = FindDevice(address)?.GetRegisterName(address) ??
-            "UNHANDLED";
+        bool handled = device is not null;
+        bool captureSummary =
+            !handled || TraceMode == MmioTraceMode.Full;
+        if (!captureSummary && Accessed is null)
+            return;
+
+        string registerName = device?.GetRegisterName(address) ?? "UNHANDLED";
 
         var access = new MmioAccess(
             _accessSequence,
@@ -213,25 +220,36 @@ public sealed class Mmio
             handled,
             registerName);
 
-        if (_accessLog.Count < MaxLoggedAccesses)
-            _accessLog.Add(access);
-
-        var key = new MmioAccessKey(address, kind, width, handled);
-        if (!_accessSummaries.TryGetValue(key, out MmioAccessSummary? summary))
+        if (captureSummary)
         {
-            summary = new MmioAccessSummary(
-                address,
-                kind,
-                width,
-                handled,
-                registerName,
-                _accessSequence);
-            _accessSummaries.Add(key, summary);
-        }
+            if (_accessLog.Count < MaxLoggedAccesses)
+                _accessLog.Add(access);
 
-        summary.Record(_accessSequence, value);
+            var key = new MmioAccessKey(address, kind, width, handled);
+            if (!_accessSummaries.TryGetValue(
+                    key,
+                    out MmioAccessSummary? summary))
+            {
+                summary = new MmioAccessSummary(
+                    address,
+                    kind,
+                    width,
+                    handled,
+                    registerName,
+                    _accessSequence);
+                _accessSummaries.Add(key, summary);
+            }
+
+            summary.Record(_accessSequence, value);
+        }
         Accessed?.Invoke(access);
     }
+}
+
+public enum MmioTraceMode
+{
+    UnhandledOnly,
+    Full,
 }
 
 public readonly record struct MmioAccess(

@@ -18,6 +18,7 @@ internal sealed class DiagnosticConsole : IDisposable
     ];
 
     private readonly RuntimeDiagnostics _diagnostics;
+    private readonly Mmio _mmio;
     private readonly PostStatusRegister _postStatus;
     private readonly StreamWriter? _logWriter;
     private readonly HashSet<uint> _observedProgramCounters = [];
@@ -34,6 +35,7 @@ internal sealed class DiagnosticConsole : IDisposable
     public DiagnosticConsole(PsxMachine machine)
     {
         _diagnostics = new RuntimeDiagnostics(machine);
+        _mmio = machine.Bus.Mmio;
         _postStatus = machine.Bus.PostStatus;
         _diagnostics.UnexpectedExceptionOccurred += OnUnexpectedException;
         _postStatus.ValueChanged += OnPostStatusChanged;
@@ -262,6 +264,21 @@ internal sealed class DiagnosticConsole : IDisposable
                 $"final=0x{trace.Result:X2} " +
                 $"resultado={(trace.Success ? "ok" : "erro")}");
         }
+    }
+
+    public void ToggleFullMmioTrace()
+    {
+        bool enable = _mmio.TraceMode != MmioTraceMode.Full;
+        _mmio.ClearAccessLog();
+        _mmio.TraceMode = enable
+            ? MmioTraceMode.Full
+            : MmioTraceMode.UnhandledOnly;
+        _lastUnhandledMmio = 0;
+        Write(
+            DiagnosticLevel.Info,
+            enable
+                ? "Trace MMIO completo ativado; o desempenho pode diminuir."
+                : "Trace MMIO completo desativado; apenas acessos não tratados serão registrados.");
     }
 
     public void Reset()

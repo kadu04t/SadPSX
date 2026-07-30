@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="SadPSX.Benchmarks/SadPSX.Benchmarks.csproj" />
   <Project Path="SadPSX.Cli/SadPSX.Cli.csproj" />
   <Project Path="SadPSX.Core/SadPSX.Core.csproj" />
   <Project Path="SadPSX.Frontend/SadPSX.Frontend.csproj" />

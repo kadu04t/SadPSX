@@ -146,9 +146,7 @@ public sealed class R3000A
     /// </summary>
     public void Step()
     {
-        _currentStepCycles = _bus.EstimateAccessCycles(
-            Pc,
-            MemoryAccessKind.InstructionFetch);
+        _currentStepCycles = 0;
         Cop0.SetHardwareInterruptPending(
             _bus.InterruptController.IsPending);
 
@@ -175,21 +173,32 @@ public sealed class R3000A
             if (!applyPendingBranchAfterThisStep &&
                 Cop0.ShouldTakeInterrupt())
             {
+                _currentStepCycles = _bus.EstimateAccessCycles(
+                    Pc,
+                    MemoryAccessKind.InstructionFetch);
                 RaiseException(ExceptionCode.Interrupt);
             }
             else if (IsUserModeAddressViolation(Pc))
             {
+                _currentStepCycles = _bus.EstimateAccessCycles(
+                    Pc,
+                    MemoryAccessKind.InstructionFetch);
                 RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
             }
             else if ((Pc & 0x03) != 0)
             {
+                _currentStepCycles = _bus.EstimateAccessCycles(
+                    Pc,
+                    MemoryAccessKind.InstructionFetch);
                 RaiseAddressException(ExceptionCode.AddressErrorLoad, Pc);
             }
             else
             {
                 try
                 {
-                    uint rawInstruction = _bus.ReadInstruction32(Pc);
+                    uint rawInstruction = _bus.ReadInstruction32(
+                        Pc,
+                        out _currentStepCycles);
                     Execute(new Instruction(rawInstruction));
                 }
                 catch (InvalidOperationException)

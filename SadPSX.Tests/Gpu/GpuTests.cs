@@ -1,3 +1,4 @@
+using SadPSX.Core.Bus;
 using SadPSX.Core.Interrupts;
 using Xunit;
 using Bus = SadPSX.Core.Bus.Bus;
@@ -113,6 +114,7 @@ public sealed class GpuTests
     public void GpuPortsAreHandledAndNamedInMmioLog()
     {
         var bus = new Bus();
+        bus.Mmio.TraceMode = MmioTraceMode.Full;
 
         bus.Write32(GpuDevice.Gp0Address, 0xE100_1000);
         bus.Read32(GpuDevice.GpuStatusAddress);

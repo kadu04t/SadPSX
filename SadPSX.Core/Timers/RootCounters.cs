@@ -273,6 +273,18 @@ public sealed class RootCounters : IClockedDevice, IMmioDevice
 
     private void Advance(int timerIndex, TimerState timer, ulong ticks)
     {
+        const ushort eventModeMask =
+            ResetAtTargetBit |
+            IrqAtTargetBit |
+            IrqAtOverflowBit;
+        if ((timer.Mode & eventModeMask) == 0 &&
+            timer.ReachedTarget &&
+            timer.ReachedOverflow)
+        {
+            timer.Counter = (ushort)(timer.Counter + ticks);
+            return;
+        }
+
         ulong targetHits;
         ulong overflowHits;
 
