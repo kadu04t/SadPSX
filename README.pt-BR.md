@@ -57,7 +57,13 @@ garantem suporte a todas as regiões, revisões ou imagens de disco.
 
 | Jogo | Estado | Comportamento observado |
 | --- | --- | --- |
-| Rayman | Jogável | Inicia pela BIOS, reproduz a abertura, chega ao gameplay e aceita controles SDL3. Os gráficos ainda apresentam problemas visíveis de precisão e o áudio pode falhar ou engasgar. |
+| Rayman | Jogável | Chega ao gameplay, aceita controles SDL3 e concluiu um save no memory card. Gráficos e áudio ainda precisam de maior precisão. |
+| Silent Hill | In-game; requer novo teste | Chega ao título e renderiza gameplay. A detecção do controle falhou antes das correções mais recentes do SIO0; geometria da tela, cores, texturas e áudio continuam imprecisos. |
+| Final Fantasy VII | In-game | Chega ao gameplay e às batalhas com o controle funcionando. Cores das FMVs e áudio estão imprecisos, e uma tentativa de save terminou em uma exceção CPU `BREAK` antes da confirmação da persistência. |
+
+Consulte o [relatório detalhado de compatibilidade e o procedimento de
+regressão](docs/COMPATIBILITY.md) para conhecer as limitações dos testes e os
+próximos retestes.
 
 <p align="center">
   <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman executando no SadPSX" width="900">

@@ -47,7 +47,12 @@ for every region, revision, or disc dump.
 
 | Game | Status | Observed behavior |
 | --- | --- | --- |
-| Rayman | Playable | Boots through the BIOS, plays the opening sequence, reaches gameplay, and accepts SDL3 gamepad input. Graphics still contain visible accuracy problems and audio can stutter or play incorrectly. |
+| Rayman | Playable | Reaches gameplay, accepts SDL3 input, and has completed a memory-card save. Graphics and audio still need accuracy work. |
+| Silent Hill | In-game; retest required | Reaches the title and renders gameplay. Controller detection failed before the latest SIO0 fixes; display geometry, colors, textures, and audio remain inaccurate. |
+| Final Fantasy VII | In-game | Reaches gameplay and battles with working input. FMV colors and audio are inaccurate, and a save attempt ended in a CPU `BREAK` exception before persistence was confirmed. |
+
+See the [detailed compatibility report and regression
+procedure](docs/COMPATIBILITY.md) for test limitations and the next retests.
 
 <p align="center">
   <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman running in SadPSX" width="900">
