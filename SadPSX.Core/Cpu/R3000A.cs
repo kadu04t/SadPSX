@@ -239,6 +239,15 @@ public sealed class R3000A
         Cycles = unchecked(Cycles + 1);
     }
 
+    internal void Stall(uint cycles)
+    {
+        if (cycles == 0)
+            return;
+
+        LastStepCycles = cycles;
+        ClockCycles = unchecked(ClockCycles + cycles);
+    }
+
     // Usado pelas instruções de branch/jump para agendar um desvio que só
     // terá efeito depois que a instrução do delay slot for executada.
     private void ScheduleBranch(uint target)

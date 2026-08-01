@@ -1,8 +1,10 @@
 using SadPSX.Core;
 using SadPSX.Core.Bios;
+using SadPSX.Core.Dma;
 using SadPSX.Core.Memory;
 using Xunit;
 using Bus = SadPSX.Core.Bus.Bus;
+using GpuDevice = SadPSX.Core.Gpu.Gpu;
 
 namespace SadPSX.Tests;
 
@@ -26,6 +28,11 @@ public sealed class PsxMachineTests
 
         return image;
     }
+
+    private static uint ChannelRegister(int channel, uint offset) =>
+        DmaController.ChannelBaseAddress +
+        (uint)(channel * 0x10) +
+        offset;
 
     [Fact]
     public void LoadBiosResetsCpuToBiosResetVector()
@@ -182,6 +189,27 @@ public sealed class PsxMachineTests
         Assert.Equal(machine.Cpu.ClockCycles, machine.Timing.ClockCycles);
         Assert.Equal(58ul, device.TotalCycles);
         Assert.Equal(2, device.TickCount);
+    }
+
+    [Fact]
+    public void StepWaitsForActiveGpuLinkedListBeforeExecutingCpu()
+    {
+        var machine = new PsxMachine();
+        machine.LoadBios(CreateBiosImageWithInstructions(0));
+        uint control = machine.Bus.Dma.Control | (1u << 11);
+        machine.Bus.Write32(DmaController.ControlAddress, control);
+        machine.Bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        machine.Bus.Ram.Write32(0x100, 0x0180_0000);
+        machine.Bus.Ram.Write32(0x104, 0xE100_0000);
+        machine.Bus.Write32(ChannelRegister(2, 0), 0x100);
+        machine.Bus.Write32(ChannelRegister(2, 8), 0x0100_0401);
+
+        machine.Step();
+
+        Assert.Equal(1ul, machine.Cpu.Cycles);
+        Assert.False(machine.Bus.Dma.GetChannelRuntime(2).Busy);
+        Assert.Equal(machine.Cpu.ClockCycles, machine.ClockCycles);
+        Assert.True(machine.ClockCycles > machine.Cpu.LastStepCycles);
     }
 
     [Fact]

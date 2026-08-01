@@ -59,6 +59,9 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
     private uint _control;
     private uint _interrupt;
     private GpuTransferState? _gpuTransfer;
+    private ulong _clockCycles;
+    private ulong _gpuWaitStartCycle;
+    private DmaGpuWaitReason _gpuWaitReason;
 
     public DmaController(
         InterruptController interruptController,
@@ -84,6 +87,46 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
     public ulong CompletedTransfers { get; private set; }
 
+    public DmaGpuWaitReason GpuWaitReason => _gpuWaitReason;
+
+    public ulong GpuWaitCycles =>
+        _gpuWaitReason == DmaGpuWaitReason.None
+            ? 0
+            : _clockCycles - _gpuWaitStartCycle;
+
+    public bool CpuBusHeld
+    {
+        get
+        {
+            GpuTransferState? transfer = _gpuTransfer;
+            if (transfer is null ||
+                transfer.Halted ||
+                transfer.CpuWindowCyclesRemaining > 0)
+            {
+                return false;
+            }
+
+            ChannelState channel = _channels[GpuChannel];
+            if (transfer.Forced &&
+                (channel.ChannelControl & (1u << 29)) != 0)
+            {
+                return false;
+            }
+
+            if (transfer.LinkedList)
+            {
+                return transfer.RequestAccepted ||
+                       GpuDmaRequestAsserted(fromRam: true);
+            }
+
+            if (transfer.WordsInBlockRemaining > 0)
+                return true;
+
+            return transfer.Forced ||
+                   GpuDmaRequestAsserted(transfer.FromRam);
+        }
+    }
+
     public void ConnectRam(Ram ram)
     {
         _ram = ram ?? throw new ArgumentNullException(nameof(ram));
@@ -98,6 +141,45 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             ComposeChannelControl(channel, state));
     }
 
+    public DmaChannelRuntimeSnapshot GetChannelRuntime(int channel)
+    {
+        ChannelState state = GetChannelState(channel);
+        uint channelControl = ComposeChannelControl(channel, state);
+        bool busy = (channelControl & BusyBit) != 0;
+        ulong activeCycles = busy && state.Active
+            ? _clockCycles - state.StartCycle
+            : 0;
+        return new DmaChannelRuntimeSnapshot(
+            state.BaseAddress,
+            state.BlockControl,
+            channelControl,
+            busy,
+            activeCycles,
+            state.LastTransferCycles,
+            state.LongestTransferCycles,
+            state.CompletedTransfers);
+    }
+
+    public DmaGpuTransferSnapshot GetGpuTransferRuntime()
+    {
+        GpuTransferState? transfer = _gpuTransfer;
+        if (transfer is null)
+            return default;
+
+        return new DmaGpuTransferSnapshot(
+            true,
+            transfer.LinkedList,
+            transfer.HeaderPending,
+            transfer.StartAddress,
+            transfer.HeaderAddress,
+            transfer.CommandsInNode,
+            transfer.CurrentAddress,
+            transfer.CommandAddress,
+            transfer.CommandsRemaining,
+            transfer.NextAddress,
+            transfer.TransferredWords);
+    }
+
     public void Reset()
     {
         foreach (ChannelState channel in _channels)
@@ -106,28 +188,41 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         _control = ResetControl;
         _interrupt = 0;
         _gpuTransfer = null;
+        _clockCycles = 0;
+        _gpuWaitStartCycle = 0;
+        _gpuWaitReason = DmaGpuWaitReason.None;
         CompletedTransfers = 0;
     }
 
     public void Tick(uint cycles)
     {
+        if (cycles == 0)
+            return;
+
+        ulong tickStartCycle = _clockCycles;
+        _clockCycles += cycles;
         uint cyclesRemaining = cycles;
         while (cyclesRemaining > 0)
         {
             TryStartPendingChannels();
             if (_gpuTransfer is null)
+            {
+                SetGpuWait(DmaGpuWaitReason.None, tickStartCycle);
                 return;
+            }
 
             GpuTransferState transfer = _gpuTransfer;
             if (transfer.Halted)
             {
                 TryStartPendingNonGpuChannels();
+                SetGpuWait(DmaGpuWaitReason.Halted, tickStartCycle);
                 return;
             }
 
             if (transfer.CpuWindowCyclesRemaining > 0)
             {
                 TryStartPendingNonGpuChannels();
+                SetGpuWait(DmaGpuWaitReason.CpuWindow, tickStartCycle);
                 uint elapsed = Math.Min(
                     cyclesRemaining,
                     transfer.CpuWindowCyclesRemaining);
@@ -141,6 +236,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 (channel.ChannelControl & (1u << 29)) != 0)
             {
                 TryStartPendingNonGpuChannels();
+                SetGpuWait(DmaGpuWaitReason.Paused, tickStartCycle);
                 return;
             }
 
@@ -150,9 +246,11 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             if (!transferred)
             {
                 TryStartPendingNonGpuChannels();
+                SetGpuWait(DmaGpuWaitReason.Request, tickStartCycle);
                 return;
             }
 
+            SetGpuWait(DmaGpuWaitReason.None, tickStartCycle);
             cyclesRemaining--;
             if (ReferenceEquals(_gpuTransfer, transfer))
                 ApplyGpuChopping(transfer);
@@ -317,10 +415,15 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 uint current = ComposeChannelControl(channel, state);
                 uint merged = Merge(current, value, writeMask);
                 state.ChannelControl = NormalizeChannelControl(channel, merged);
+                UpdateChannelActivity(
+                    state,
+                    (current & BusyBit) != 0,
+                    (state.ChannelControl & BusyBit) != 0);
                 if (channel == GpuChannel &&
                     (state.ChannelControl & BusyBit) == 0)
                 {
                     _gpuTransfer = null;
+                    SetGpuWait(DmaGpuWaitReason.None, _clockCycles);
                 }
                 TryStartPendingChannels();
                 break;
@@ -608,8 +711,10 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
             {
                 LinkedList = true,
                 FromRam = true,
+                StartAddress = channel.BaseAddress & DmaAddressMask,
                 CurrentAddress = channel.BaseAddress & DmaAddressMask,
                 HeaderPending = true,
+                VisitedLinkedListAddresses = [],
             };
             return;
         }
@@ -629,6 +734,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         _gpuTransfer = new GpuTransferState
         {
             FromRam = fromRam,
+            StartAddress = channel.BaseAddress & DmaAddressMask,
             CurrentAddress = channel.BaseAddress & DmaAddressMask,
             AddressStep = decrement ? unchecked((uint)-4) : 4,
             SynchronizationMode = synchronizationMode,
@@ -766,8 +872,13 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
 
         if (transfer.HeaderPending)
         {
-            if (!GpuDmaRequestAsserted(fromRam: true))
-                return false;
+            if (!transfer.RequestAccepted)
+            {
+                if (!GpuDmaRequestAsserted(fromRam: true))
+                    return false;
+
+                transfer.RequestAccepted = true;
+            }
 
             if (!IsRamDmaAddress(transfer.CurrentAddress) ||
                 transfer.TransferredWords >= MaximumTransferWords)
@@ -776,9 +887,20 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
                 return false;
             }
 
+            uint physicalHeaderAddress =
+                transfer.CurrentAddress & RamAddressMask;
+            if (!transfer.VisitedLinkedListAddresses!.Add(
+                    physicalHeaderAddress))
+            {
+                AbortGpuTransfer();
+                return false;
+            }
+
             uint header = _ram.Read32(
-                transfer.CurrentAddress & RamAddressMask);
+                physicalHeaderAddress);
+            transfer.HeaderAddress = transfer.CurrentAddress;
             transfer.CommandsRemaining = header >> 24;
+            transfer.CommandsInNode = transfer.CommandsRemaining;
             transfer.CommandAddress =
                 (transfer.CurrentAddress + 4) & DmaAddressMask;
             transfer.NextAddress = header & 0x00FF_FFFF;
@@ -898,8 +1020,21 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
     {
         ChannelState state = _channels[channel];
         state.ChannelControl &= ~(BusyBit | TriggerBit);
+        if (state.Active)
+        {
+            ulong duration = _clockCycles - state.StartCycle;
+            state.LastTransferCycles = duration;
+            state.LongestTransferCycles = Math.Max(
+                state.LongestTransferCycles,
+                duration);
+            state.CompletedTransfers++;
+            state.Active = false;
+        }
         if (channel == GpuChannel)
+        {
             _gpuTransfer = null;
+            SetGpuWait(DmaGpuWaitReason.None, _clockCycles);
+        }
         CompletedTransfers++;
 
         uint channelInterruptEnable = 1u << (16 + channel);
@@ -1010,6 +1145,35 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         return _channels[channel];
     }
 
+    private void UpdateChannelActivity(
+        ChannelState state,
+        bool wasBusy,
+        bool isBusy)
+    {
+        if (!wasBusy && isBusy)
+        {
+            state.Active = true;
+            state.StartCycle = _clockCycles;
+        }
+        else if (wasBusy && !isBusy)
+        {
+            state.Active = false;
+        }
+    }
+
+    private void SetGpuWait(
+        DmaGpuWaitReason reason,
+        ulong startCycle)
+    {
+        if (reason == _gpuWaitReason)
+            return;
+
+        _gpuWaitReason = reason;
+        _gpuWaitStartCycle = reason == DmaGpuWaitReason.None
+            ? _clockCycles
+            : startCycle;
+    }
+
     private static InvalidOperationException UnknownRegister(uint address) =>
         new($"Endereço 0x{address:X8} não pertence ao DMA.");
 
@@ -1018,12 +1182,22 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         public uint BaseAddress;
         public uint BlockControl;
         public uint ChannelControl;
+        public bool Active;
+        public ulong StartCycle;
+        public ulong LastTransferCycles;
+        public ulong LongestTransferCycles;
+        public ulong CompletedTransfers;
 
         public void Reset()
         {
             BaseAddress = 0;
             BlockControl = 0;
             ChannelControl = 0;
+            Active = false;
+            StartCycle = 0;
+            LastTransferCycles = 0;
+            LongestTransferCycles = 0;
+            CompletedTransfers = 0;
         }
     }
 
@@ -1035,7 +1209,11 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         public bool Halted;
         public bool ChoppingEnabled;
         public bool HeaderPending;
+        public bool RequestAccepted;
         public uint SynchronizationMode;
+        public uint StartAddress;
+        public uint HeaderAddress;
+        public uint CommandsInNode;
         public uint CurrentAddress;
         public uint AddressStep;
         public uint BlockSize;
@@ -1049,6 +1227,7 @@ public sealed class DmaController : IMmioDevice, IClockedDevice
         public uint WordsUntilChop;
         public uint CpuWindowCyclesRemaining;
         public ulong TransferredWords;
+        public HashSet<uint>? VisitedLinkedListAddresses;
     }
 }
 
@@ -1056,3 +1235,35 @@ public readonly record struct DmaChannelSnapshot(
     uint BaseAddress,
     uint BlockControl,
     uint ChannelControl);
+
+public readonly record struct DmaChannelRuntimeSnapshot(
+    uint BaseAddress,
+    uint BlockControl,
+    uint ChannelControl,
+    bool Busy,
+    ulong ActiveCycles,
+    ulong LastTransferCycles,
+    ulong LongestTransferCycles,
+    ulong CompletedTransfers);
+
+public readonly record struct DmaGpuTransferSnapshot(
+    bool Active,
+    bool LinkedList,
+    bool HeaderPending,
+    uint StartAddress,
+    uint HeaderAddress,
+    uint CommandsInNode,
+    uint CurrentAddress,
+    uint CommandAddress,
+    uint CommandsRemaining,
+    uint NextAddress,
+    ulong TransferredWords);
+
+public enum DmaGpuWaitReason
+{
+    None,
+    Request,
+    CpuWindow,
+    Paused,
+    Halted,
+}

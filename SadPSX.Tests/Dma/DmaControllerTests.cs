@@ -108,6 +108,52 @@ public sealed class DmaControllerTests
     }
 
     [Fact]
+    public void GpuLinkedListKeepsAcceptedRequestAcrossNodes()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Ram.Write32(0x100, 0x0100_0200);
+        bus.Ram.Write32(0x104, 0x2000_0000);
+        bus.Ram.Write32(0x200, 0x0380_0000);
+        bus.Ram.Write32(0x204, 0);
+        bus.Ram.Write32(0x208, 1);
+        bus.Ram.Write32(0x20C, 2);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0401);
+        bus.Dma.Tick(2);
+        bus.Gpu.Tick(1);
+        bus.Dma.Tick(4);
+        bus.Gpu.Tick(3);
+
+        Assert.Null(bus.Gpu.PendingGp0Command);
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
+    public void GpuLinkedListCycleRaisesBusErrorAndStops()
+    {
+        var bus = new Bus();
+        EnableChannel(bus, 2);
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Ram.Write32(0x100, 0x0000_0100);
+        bus.Write32(ChannelRegister(2, 0), 0x100);
+
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0401);
+        bus.Dma.Tick(2);
+
+        Assert.NotEqual(
+            0u,
+            bus.Read32(DmaController.InterruptAddress) & (1u << 15));
+        Assert.Equal(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+    }
+
+    [Fact]
     public void EnabledCompletionRaisesDicrAndDmaInterrupt()
     {
         var bus = new Bus();

@@ -3,6 +3,7 @@ using SadPSX.Core.CdRom.Media;
 using SadPSX.Core.Dma;
 using Xunit;
 using Bus = SadPSX.Core.Bus.Bus;
+using GpuDevice = SadPSX.Core.Gpu.Gpu;
 
 namespace SadPSX.Tests.Dma;
 
@@ -100,6 +101,69 @@ public sealed class CdRomDmaTests
             0u,
             bus.Dma.GetChannel(3).ChannelControl & (1u << 24));
         Assert.Equal(0x1122_3344u, bus.Ram.Read32(0x1000));
+    }
+
+    [Fact]
+    public void CdRomDmaDoesNotPreemptActiveGpuBlock()
+    {
+        var bus = new Bus();
+        using var disc = new MemoryDiscImage();
+        disc.Sector[24] = 0x44;
+        disc.Sector[25] = 0x33;
+        disc.Sector[26] = 0x22;
+        disc.Sector[27] = 0x11;
+        bus.CdRom.LoadDisc(disc);
+        ReadFirstSector(bus);
+        RequestData(bus);
+
+        uint control = bus.Dma.Control;
+        control &= ~((0xFu << 8) | (0xFu << 12));
+        control |= (0xFu << 8) | (0x8u << 12);
+        bus.Write32(DmaController.ControlAddress, control);
+
+        bus.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        bus.Ram.Write32(0x2000, 0);
+        bus.Ram.Write32(0x2004, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x2000);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0002);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        bus.Write32(ChannelRegister(3, 0), 0x1000);
+        bus.Write32(ChannelRegister(3, 4), 0x0001_0001);
+        bus.Write32(ChannelRegister(3, 8), 0x0100_0200);
+
+        bus.Dma.Tick(1);
+
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(3).ChannelControl & (1u << 24));
+        Assert.NotEqual(
+            0u,
+            bus.Dma.GetChannel(2).ChannelControl & (1u << 24));
+        Assert.Equal(0u, bus.Ram.Read32(0x1000));
+        Assert.Equal(1, bus.Gpu.DmaFifoCount);
+    }
+
+    [Fact]
+    public void RuntimeSnapshotReportsGpuRequestWaitAge()
+    {
+        var bus = new Bus();
+        bus.Write32(
+            DmaController.ControlAddress,
+            bus.Dma.Control | (1u << 11));
+        bus.Ram.Write32(0x2000, 0);
+        bus.Write32(ChannelRegister(2, 0), 0x2000);
+        bus.Write32(ChannelRegister(2, 4), 0x0001_0001);
+        bus.Write32(ChannelRegister(2, 8), 0x0100_0201);
+
+        bus.Dma.Tick(100);
+
+        DmaChannelRuntimeSnapshot snapshot =
+            bus.Dma.GetChannelRuntime(2);
+        Assert.True(snapshot.Busy);
+        Assert.Equal(100ul, snapshot.ActiveCycles);
+        Assert.Equal(DmaGpuWaitReason.Request, bus.Dma.GpuWaitReason);
+        Assert.Equal(100ul, bus.Dma.GpuWaitCycles);
     }
 
     private static void ReadFirstSector(Bus bus)

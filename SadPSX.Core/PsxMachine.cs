@@ -66,6 +66,12 @@ public sealed class PsxMachine
     /// </summary>
     public void Step()
     {
+        while (Bus.Dma.CpuBusHeld)
+        {
+            Cpu.Stall(1);
+            Timing.Advance(1);
+        }
+
         Cpu.Step();
         Timing.Advance(Cpu.LastStepCycles);
     }
