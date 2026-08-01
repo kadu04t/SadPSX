@@ -4,11 +4,15 @@ using SadPSX.Core.Bus;
 using SadPSX.Core.Controllers;
 using SadPSX.Core.Cpu;
 using SadPSX.Core.Debugging;
+using SadPSX.Core.Dma;
+using SadPSX.Frontend.Video;
 
 namespace SadPSX.Frontend.Diagnostics;
 
 internal sealed class DiagnosticConsole : IDisposable
 {
+    private const ulong DmaStallThresholdCycles = 3_386_880;
+
     private static readonly string[] RegisterNames =
     [
         "zero", "at", "v0", "v1", "a0", "a1", "a2", "a3",
@@ -25,10 +29,15 @@ internal sealed class DiagnosticConsole : IDisposable
 
     private ulong _lastInstructions;
     private ulong _lastVideoFrames;
+    private ulong _lastCapturedFrames;
+    private ulong _lastPresentedFrames;
     private ulong _lastUnhandledMmio;
     private double _lastInstructionsPerSecond;
+    private VideoPresentationMetrics _lastVideoMetrics;
     private bool _cpuStallReported;
     private bool _videoStallReported;
+    private bool _presentationStallReported;
+    private bool _dmaStallReported;
     private bool _loopReported;
     private bool _disposed;
 
@@ -46,12 +55,20 @@ internal sealed class DiagnosticConsole : IDisposable
             Write(DiagnosticLevel.Info, $"Log: {logPath}");
     }
 
-    public void Poll(bool paused, double instructionsPerSecond)
+    public void Poll(
+        bool paused,
+        double instructionsPerSecond,
+        VideoPresentationMetrics videoMetrics)
     {
         RuntimeDiagnosticSnapshot snapshot = _diagnostics.Capture();
         _lastInstructionsPerSecond = instructionsPerSecond;
+        _lastVideoMetrics = videoMetrics;
         ulong instructionDelta = snapshot.Instructions - _lastInstructions;
         ulong frameDelta = snapshot.VideoFrames - _lastVideoFrames;
+        ulong captureDelta =
+            videoMetrics.CapturedFrames - _lastCapturedFrames;
+        ulong presentationDelta =
+            videoMetrics.PresentedFrames - _lastPresentedFrames;
 
         if (!paused && instructionDelta == 0)
         {
@@ -82,6 +99,45 @@ internal sealed class DiagnosticConsole : IDisposable
         else
         {
             _videoStallReported = false;
+        }
+
+        bool presentationStalled =
+            !paused &&
+            frameDelta > 0 &&
+            (captureDelta == 0 || presentationDelta == 0);
+        if (presentationStalled)
+        {
+            if (!_presentationStallReported)
+            {
+                Write(
+                    DiagnosticLevel.Warning,
+                    "O timing de vídeo avança, mas o frontend deixou de capturar ou apresentar frames.");
+                PrintStatus(snapshot, instructionsPerSecond);
+                _presentationStallReported = true;
+            }
+        }
+        else
+        {
+            _presentationStallReported = false;
+        }
+
+        bool dmaStalled =
+            snapshot.GpuDma.ActiveCycles >= DmaStallThresholdCycles ||
+            snapshot.CdRomDma.ActiveCycles >= DmaStallThresholdCycles;
+        if (!paused && instructionDelta > 0 && dmaStalled)
+        {
+            if (!_dmaStallReported)
+            {
+                Write(
+                    DiagnosticLevel.Warning,
+                    "DMA ocupado por tempo anormal enquanto a CPU continua executando.");
+                PrintStatus(snapshot, instructionsPerSecond);
+                _dmaStallReported = true;
+            }
+        }
+        else
+        {
+            _dmaStallReported = false;
         }
 
         if (!paused &&
@@ -118,6 +174,8 @@ internal sealed class DiagnosticConsole : IDisposable
 
         _lastInstructions = snapshot.Instructions;
         _lastVideoFrames = snapshot.VideoFrames;
+        _lastCapturedFrames = videoMetrics.CapturedFrames;
+        _lastPresentedFrames = videoMetrics.PresentedFrames;
         _lastUnhandledMmio = snapshot.UnhandledMmioAccesses;
         _observedProgramCounters.Clear();
     }
@@ -286,11 +344,16 @@ internal sealed class DiagnosticConsole : IDisposable
         _diagnostics.Clear();
         _lastInstructions = 0;
         _lastVideoFrames = 0;
+        _lastCapturedFrames = 0;
+        _lastPresentedFrames = 0;
         _lastUnhandledMmio = 0;
         _lastInstructionsPerSecond = 0;
+        _lastVideoMetrics = default;
         _observedProgramCounters.Clear();
         _cpuStallReported = false;
         _videoStallReported = false;
+        _presentationStallReported = false;
+        _dmaStallReported = false;
         _loopReported = false;
         Write(DiagnosticLevel.Info, "Diagnósticos reiniciados.");
     }
@@ -328,7 +391,33 @@ internal sealed class DiagnosticConsole : IDisposable
         WriteRaw(
             $"Vídeo  frame={snapshot.VideoFrames} linha={snapshot.Scanline} " +
             $"GP0={snapshot.Gp0Commands} GP1={snapshot.Gp1Commands} " +
+            $"FIFO={snapshot.GpuDmaFifoWords} " +
+            $"sync={snapshot.CpuGp0FifoSynchronizations}/" +
+            $"{snapshot.CpuGp0FifoWordsDrained} " +
             $"GPUSTAT=0x{snapshot.GpuStatus:X8}");
+        if (snapshot.PendingGp0Command is uint pendingGp0Command)
+        {
+            string expectedWords = snapshot.ExpectedGp0Words < 0
+                ? "variável"
+                : snapshot.ExpectedGp0Words.ToString();
+            WriteRaw(
+                $"GP0 pendente=0x{pendingGp0Command:X8} " +
+                $"palavras={snapshot.PendingGp0Words}/{expectedWords}");
+        }
+        if (snapshot.RejectedPrimitives > 0)
+        {
+            WriteRaw(
+                $"GPU descartou={snapshot.RejectedPrimitives} " +
+                $"primeira={snapshot.FirstRejectedPrimitive}");
+        }
+        WriteRaw(
+            $"Display VRAM=0x{snapshot.DisplayVramStart:X5} " +
+            $"H=0x{snapshot.HorizontalDisplayRange:X6} " +
+            $"V=0x{snapshot.VerticalDisplayRange:X5} " +
+            $"capturados={_lastVideoMetrics.CapturedFrames} " +
+            $"apresentados={_lastVideoMetrics.PresentedFrames} " +
+            $"descartados={_lastVideoMetrics.DroppedFrames} " +
+            $"repetidos={_lastVideoMetrics.ConsecutiveDuplicateFrames}");
         WriteRaw(
             $"IRQ    I_STAT=0x{snapshot.InterruptStatus:X4} " +
             $"I_MASK=0x{snapshot.InterruptMask:X4}");
@@ -350,12 +439,44 @@ internal sealed class DiagnosticConsole : IDisposable
         WriteRaw(
             $"DMA    transferências={snapshot.DmaTransfers}  " +
             $"MMIO não tratado={snapshot.UnhandledMmioAccesses}");
+        WriteRaw(FormatDmaChannel("DMA2 GPU", snapshot.GpuDma));
+        if (snapshot.GpuDmaTransfer.Active)
+        {
+            DmaGpuTransferSnapshot transfer = snapshot.GpuDmaTransfer;
+            WriteRaw(
+                $"DMA2 ativo lista={transfer.LinkedList} " +
+                $"cabeçalho={transfer.HeaderPending} " +
+                $"início=0x{transfer.StartAddress:X6} " +
+                $"nó=0x{transfer.HeaderAddress:X6} " +
+                $"qtd={transfer.CommandsInNode} " +
+                $"atual=0x{transfer.CurrentAddress:X6} " +
+                $"comando=0x{transfer.CommandAddress:X6} " +
+                $"restantes={transfer.CommandsRemaining} " +
+                $"próximo=0x{transfer.NextAddress:X6} " +
+                $"palavras={transfer.TransferredWords}");
+        }
+        WriteRaw(
+            $"{FormatDmaChannel("DMA3 CD ", snapshot.CdRomDma)} " +
+            $"GPU-espera={snapshot.GpuDmaWaitReason} " +
+            $"há={snapshot.GpuDmaWaitCycles} ciclos");
         WriteRaw(
             $"Boot   POST=0x{snapshot.PostStatus:X2} " +
             $"(escritas={snapshot.PostWriteCount})  " +
             $"SIO0_CTRL=0x{snapshot.Sio0Control:X4} " +
             $"RX={snapshot.Sio0ReceiveBytes}");
     }
+
+    private static string FormatDmaChannel(
+        string name,
+        DmaChannelRuntimeSnapshot channel) =>
+        $"{name} MADR=0x{channel.BaseAddress:X6} " +
+        $"BCR=0x{channel.BlockControl:X8} " +
+        $"CHCR=0x{channel.ChannelControl:X8} " +
+        $"busy={(channel.Busy ? "sim" : "não")} " +
+        $"há={channel.ActiveCycles} " +
+        $"último={channel.LastTransferCycles} " +
+        $"máximo={channel.LongestTransferCycles} ciclos " +
+        $"concluídas={channel.CompletedTransfers}";
 
     private void OnPostStatusChanged(byte value)
     {

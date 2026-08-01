@@ -54,6 +54,7 @@ internal sealed class FrontendApplication : IDisposable
         _controllerInput = new ControllerInputState(
             _machine.Bus.Sio0.ControllerPort1);
         _gamepadInput = new SdlGamepadInput(_controllerInput);
+        _machine.Bus.VideoTiming.VBlankStarted += OnVBlankStarted;
         _audioOutput.SetPaused(_paused);
     }
 
@@ -128,6 +129,7 @@ internal sealed class FrontendApplication : IDisposable
 
     public void Dispose()
     {
+        _machine.Bus.VideoTiming.VBlankStarted -= OnVBlankStarted;
         if (_memoryCard.IsDirty)
             _memoryCard.Save();
         _gamepadInput.Dispose();
@@ -140,6 +142,7 @@ internal sealed class FrontendApplication : IDisposable
     {
         try
         {
+            _videoOutput.Capture(_machine.Bus.Gpu);
             PresentFrame();
 
             while (_running)
@@ -178,7 +181,9 @@ internal sealed class FrontendApplication : IDisposable
 
     private void PresentFrame()
     {
-        _videoOutput.Present(_machine.Bus.Gpu);
+        if (!_videoOutput.PresentPending())
+            return;
+
         _presentedFrames++;
 
         if (_frameLimit is int frameLimit &&
@@ -342,12 +347,20 @@ internal sealed class FrontendApplication : IDisposable
         double instructionsPerSecond =
             elapsedInstructions / elapsedSeconds;
         _lastTitleInstructionCount = instructionCount;
-        _diagnosticConsole.Poll(_paused, instructionsPerSecond);
+        _diagnosticConsole.Poll(
+            _paused,
+            instructionsPerSecond,
+            _videoOutput.Metrics);
 
         string state = _paused ? "Pausado" : "Executando";
         _videoOutput.SetTitle(
             $"SadPSX | {state} | PC 0x{_machine.Cpu.Pc:X8} | " +
             $"{instructionsPerSecond / 1_000_000:0.00} MIPS");
+    }
+
+    private void OnVBlankStarted(uint scanline)
+    {
+        _videoOutput.Capture(_machine.Bus.Gpu);
     }
 
     private void ToggleControllerType()

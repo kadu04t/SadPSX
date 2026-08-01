@@ -8,9 +8,9 @@ internal sealed class SdlVideoOutput : IDisposable
 {
     private readonly nint _window;
     private readonly nint _renderer;
+    private readonly VideoFrameBuffer _frameBuffer = new();
 
     private nint _texture;
-    private uint[] _pixels = [];
     private int _textureWidth;
     private int _textureHeight;
     private bool _disposed;
@@ -32,15 +32,25 @@ internal sealed class SdlVideoOutput : IDisposable
         SDL.SetRenderVSync(_renderer, 0);
     }
 
-    public void Present(Gpu gpu)
+    public VideoPresentationMetrics Metrics => _frameBuffer.GetMetrics();
+
+    public void Capture(Gpu gpu)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _frameBuffer.Capture(gpu);
+    }
 
-        GpuDisplayInfo display = gpu.GetDisplayInfo();
+    public bool PresentPending()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_frameBuffer.HasFrame)
+            return false;
+
+        GpuDisplayInfo display = _frameBuffer.Display;
         EnsureTexture(display.Width, display.Height);
-        gpu.CopyDisplayRgba(_pixels);
 
-        Span<byte> bytes = MemoryMarshal.AsBytes(_pixels.AsSpan());
+        Span<byte> bytes = MemoryMarshal.AsBytes(
+            _frameBuffer.Pixels);
         if (!SDL.UpdateTexture(
                 _texture,
                 nint.Zero,
@@ -67,6 +77,8 @@ internal sealed class SdlVideoOutput : IDisposable
         }
 
         EnsureSuccess(SDL.RenderPresent(_renderer), "apresentar o frame");
+        _frameBuffer.MarkPresented();
+        return true;
     }
 
     public void SetTitle(string title)
@@ -143,7 +155,6 @@ internal sealed class SdlVideoOutput : IDisposable
 
         _textureWidth = width;
         _textureHeight = height;
-        _pixels = new uint[width * height];
     }
 
     private static void EnsureSuccess(bool succeeded, string operation)
