@@ -72,22 +72,52 @@ public sealed partial class Gpu
                 textureV);
         }
 
-        if (ExceedsPrimitiveDimensions(vertices))
+        RasterVertex[] firstTriangle =
+            [vertices[0], vertices[1], vertices[2]];
+        bool firstTriangleRejected =
+            ExceedsPrimitiveDimensions(firstTriangle);
+        if (firstTriangleRejected)
+            RecordRejectedPrimitive(commandWord, firstTriangle);
+
+        RasterVertex[]? secondTriangle = quadrilateral
+            ? [vertices[1], vertices[2], vertices[3]]
+            : null;
+        bool secondTriangleRejected =
+            secondTriangle is not null &&
+            ExceedsPrimitiveDimensions(secondTriangle);
+        if (secondTriangleRejected)
+            RecordRejectedPrimitive(commandWord, secondTriangle!);
+
+        if (firstTriangleRejected &&
+            (!quadrilateral || secondTriangleRejected))
+        {
             return;
+        }
 
-        DrawTriangle(
-            vertices[0],
-            vertices[1],
-            vertices[2],
-            gouraud,
-            textured,
-            semiTransparent,
-            rawTexture,
-            texturePage,
-            colorLookupX,
-            colorLookupY);
+        if (textured)
+        {
+            PrepareColorLookupCache(
+                texturePage,
+                colorLookupX,
+                colorLookupY);
+        }
 
-        if (quadrilateral)
+        if (!firstTriangleRejected)
+        {
+            DrawTriangle(
+                vertices[0],
+                vertices[1],
+                vertices[2],
+                gouraud,
+                textured,
+                semiTransparent,
+                rawTexture,
+                texturePage,
+                colorLookupX,
+                colorLookupY);
+        }
+
+        if (quadrilateral && !secondTriangleRejected)
         {
             DrawTriangle(
                 vertices[1],
@@ -209,8 +239,6 @@ public sealed partial class Gpu
                         textureU,
                         textureV,
                         texturePage,
-                        colorLookupX,
-                        colorLookupY,
                         out ushort texel))
                 {
                     continue;
@@ -260,18 +288,23 @@ public sealed partial class Gpu
             DrawLineSegment(
                 vertices[vertexIndex - 1],
                 vertices[vertexIndex],
-                semiTransparent);
+                semiTransparent,
+                commandWord);
         }
     }
 
     private void DrawLineSegment(
         RasterVertex start,
         RasterVertex end,
-        bool semiTransparent)
+        bool semiTransparent,
+        uint commandWord)
     {
         if (Math.Abs(end.PixelX - start.PixelX) > 1023 ||
             Math.Abs(end.PixelY - start.PixelY) > 511)
         {
+            RecordRejectedPrimitive(
+                commandWord,
+                [start, end]);
             return;
         }
 
@@ -329,7 +362,7 @@ public sealed partial class Gpu
         bool semiTransparent = (commandWord & (1u << 25)) != 0;
         bool rawTexture = (commandWord & (1u << 24)) != 0;
         int sizeCode = (int)((commandWord >> 27) & 3);
-        RasterVertex origin = CreateVertex(
+        RasterVertex origin = CreateRectangleVertex(
             packet[1],
             DecodeRgb(commandWord),
             0,
@@ -379,6 +412,13 @@ public sealed partial class Gpu
         uint texturePage = _internalRegisters[0] & 0x9FF;
         bool flipHorizontal = (_internalRegisters[0] & (1u << 12)) != 0;
         bool flipVertical = (_internalRegisters[0] & (1u << 13)) != 0;
+        if (textured)
+        {
+            PrepareColorLookupCache(
+                texturePage,
+                colorLookupX,
+                colorLookupY);
+        }
 
         for (int offsetY = 0; offsetY < height; offsetY++)
         {
@@ -404,8 +444,6 @@ public sealed partial class Gpu
                         sampleU,
                         sampleV,
                         texturePage,
-                        colorLookupX,
-                        colorLookupY,
                         out ushort texel))
                 {
                     continue;
@@ -429,8 +467,6 @@ public sealed partial class Gpu
         int textureU,
         int textureV,
         uint texturePage,
-        int colorLookupX,
-        int colorLookupY,
         out ushort texel)
     {
         ApplyTextureWindow(ref textureU, ref textureV);
@@ -452,9 +488,7 @@ public sealed partial class Gpu
                         pageY + textureV);
                     int colorIndex =
                         (packed >> ((textureU & 3) * 4)) & 0x0F;
-                    texel = Vram.ReadPixel(
-                        colorLookupX + colorIndex,
-                        colorLookupY);
+                    texel = _colorLookupCache[colorIndex];
                     break;
                 }
 
@@ -465,9 +499,7 @@ public sealed partial class Gpu
                         pageY + textureV);
                     int colorIndex =
                         (packed >> ((textureU & 1) * 8)) & 0xFF;
-                    texel = Vram.ReadPixel(
-                        colorLookupX + colorIndex,
-                        colorLookupY);
+                    texel = _colorLookupCache[colorIndex];
                     break;
                 }
 
@@ -477,6 +509,39 @@ public sealed partial class Gpu
         }
 
         return texel != 0;
+    }
+
+    private void PrepareColorLookupCache(
+        uint texturePage,
+        int colorLookupX,
+        int colorLookupY)
+    {
+        int textureDepth = (int)((texturePage >> 7) & 3);
+        int requiredEntries = textureDepth switch
+        {
+            0 => 16,
+            1 => 256,
+            _ => 0,
+        };
+        if (requiredEntries == 0)
+            return;
+
+        if (_colorLookupCacheX == colorLookupX &&
+            _colorLookupCacheY == colorLookupY &&
+            _colorLookupCacheEntries >= requiredEntries)
+        {
+            return;
+        }
+
+        for (int index = 0; index < requiredEntries; index++)
+        {
+            _colorLookupCache[index] =
+                Vram.ReadPixel(colorLookupX + index, colorLookupY);
+        }
+
+        _colorLookupCacheX = colorLookupX;
+        _colorLookupCacheY = colorLookupY;
+        _colorLookupCacheEntries = requiredEntries;
     }
 
     private void ApplyTextureWindow(ref int textureU, ref int textureV)
@@ -596,6 +661,21 @@ public sealed partial class Gpu
         return new RasterVertex(pixelX, pixelY, color, textureU, textureV);
     }
 
+    private RasterVertex CreateRectangleVertex(
+        uint coordinateWord,
+        RgbColor color,
+        int textureU,
+        int textureV)
+    {
+        RasterVertex vertex =
+            CreateVertex(coordinateWord, color, textureU, textureV);
+        return vertex with
+        {
+            PixelX = SignExtend11(vertex.PixelX & 0x7FF),
+            PixelY = SignExtend11(vertex.PixelY & 0x7FF),
+        };
+    }
+
     private void GetDrawingArea(
         out int left,
         out int top,
@@ -633,6 +713,23 @@ public sealed partial class Gpu
         }
 
         return false;
+    }
+
+    private void RecordRejectedPrimitive(
+        uint commandWord,
+        IReadOnlyList<RasterVertex> vertices)
+    {
+        RejectedPrimitiveCount++;
+        if (FirstRejectedPrimitive is not null)
+            return;
+
+        FirstRejectedPrimitive =
+            $"GP0=0x{commandWord:X8} " +
+            string.Join(
+                ' ',
+                vertices.Select(
+                    (vertex, index) =>
+                        $"V{index}=({vertex.PixelX},{vertex.PixelY})"));
     }
 
     private static RgbColor DecodeRgb(uint value)

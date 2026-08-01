@@ -145,4 +145,94 @@ public sealed class GpuTests
         Assert.Equal(15, gpu.DmaFifoCount);
         Assert.NotEqual(0u, gpu.Status & (1u << 28));
     }
+
+    [Fact]
+    public void CpuGp0WritePreservesPreviouslyAcceptedDmaOrder()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        Assert.True(gpu.TryWriteDmaWord(0xE300_280A));
+
+        gpu.Write32(GpuDevice.Gp0Address, 0xE300_5014);
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x1000_0003);
+
+        Assert.Equal(0x0000_5014u, gpu.Read32(GpuDevice.Gp0Address));
+        Assert.Equal(0, gpu.DmaFifoCount);
+        Assert.Equal(1ul, gpu.CpuGp0FifoSynchronizations);
+        Assert.Equal(1ul, gpu.CpuGp0FifoWordsDrained);
+    }
+
+    [Fact]
+    public void CpuGp0WriteCompletesPacketStartedByDma()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        Assert.True(gpu.TryWriteDmaWord(0x0200_00FF));
+        Assert.True(gpu.TryWriteDmaWord(0));
+
+        gpu.Write32(GpuDevice.Gp0Address, 1u | (1u << 16));
+
+        Assert.Equal(0x001Fu, gpu.Vram.ReadPixel(0, 0));
+        Assert.Equal(0x001Fu, gpu.Vram.ReadPixel(15, 0));
+        Assert.Null(gpu.PendingGp0Command);
+        Assert.Equal(1ul, gpu.CpuGp0FifoSynchronizations);
+        Assert.Equal(2ul, gpu.CpuGp0FifoWordsDrained);
+    }
+
+    [Fact]
+    public void PartialPolygonPacketClearsCommandAndDmaReadiness()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+        gpu.Write32(GpuDevice.GpuStatusAddress, 0x0400_0002);
+        Assert.True(gpu.TryWriteDmaWord(0x2000_0000));
+
+        gpu.Tick(1);
+
+        Assert.Equal(0, gpu.DmaFifoCount);
+        Assert.Equal(0u, gpu.Status & (1u << 26));
+        Assert.Equal(0u, gpu.Status & (1u << 28));
+        Assert.Equal(0u, gpu.Status & (1u << 25));
+        Assert.True(gpu.TryWriteDmaWord(0));
+    }
+
+    [Fact]
+    public void FlatPolylineSignalsCommandReadinessBetweenSegments()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+
+        gpu.Write32(GpuDevice.Gp0Address, 0x4800_00FF);
+        gpu.Write32(GpuDevice.Gp0Address, 0);
+
+        Assert.Equal(0u, gpu.Status & (1u << 26));
+
+        gpu.Write32(GpuDevice.Gp0Address, 1);
+
+        Assert.NotEqual(0u, gpu.Status & (1u << 26));
+        Assert.Equal(0u, gpu.Status & (1u << 28));
+
+        gpu.Write32(GpuDevice.Gp0Address, 0x5000_5000);
+
+        Assert.Null(gpu.PendingGp0Command);
+        Assert.NotEqual(0u, gpu.Status & (1u << 26));
+    }
+
+    [Fact]
+    public void GouraudPolylineSignalsReadinessOnlyAtVertexBoundary()
+    {
+        var gpu = new GpuDevice(new InterruptController());
+
+        gpu.Write32(GpuDevice.Gp0Address, 0x5800_00FF);
+        gpu.Write32(GpuDevice.Gp0Address, 0);
+        gpu.Write32(GpuDevice.Gp0Address, 0x0000_FF00);
+
+        Assert.Equal(0u, gpu.Status & (1u << 26));
+
+        gpu.Write32(GpuDevice.Gp0Address, 1);
+
+        Assert.NotEqual(0u, gpu.Status & (1u << 26));
+
+        gpu.Write32(GpuDevice.Gp0Address, 0x00FF_0000);
+
+        Assert.Equal(0u, gpu.Status & (1u << 26));
+    }
 }

@@ -20,9 +20,13 @@ public sealed partial class Gpu : IMmioDevice, IClockedDevice
     private readonly InterruptController _interruptController;
     private readonly uint[] _internalRegisters = new uint[8];
     private readonly Queue<uint> _dmaFifo = new(16);
+    private readonly ushort[] _colorLookupCache = new ushort[256];
 
     private uint _status;
     private uint _gpuRead;
+    private int _colorLookupCacheX = -1;
+    private int _colorLookupCacheY = -1;
+    private int _colorLookupCacheEntries;
 
     public Gpu(InterruptController interruptController)
     {
@@ -45,6 +49,17 @@ public sealed partial class Gpu : IMmioDevice, IClockedDevice
 
     public ulong Gp1CommandCount { get; private set; }
     public int DmaFifoCount => _dmaFifo.Count;
+    public ulong CpuGp0FifoSynchronizations { get; private set; }
+    public ulong CpuGp0FifoWordsDrained { get; private set; }
+    public ulong RejectedPrimitiveCount { get; private set; }
+    public string? FirstRejectedPrimitive { get; private set; }
+
+    public uint? PendingGp0Command =>
+        _gp0Packet.Count > 0 ? _gp0Packet[0] : null;
+
+    public int PendingGp0Words => _gp0Packet.Count;
+
+    public int ExpectedGp0Words => _expectedGp0Words;
 
     public uint DisplayVramStart { get; private set; }
 
@@ -92,6 +107,10 @@ public sealed partial class Gpu : IMmioDevice, IClockedDevice
         LastGp1Command = 0;
         Gp0CommandCount = 0;
         Gp1CommandCount = 0;
+        CpuGp0FifoSynchronizations = 0;
+        CpuGp0FifoWordsDrained = 0;
+        RejectedPrimitiveCount = 0;
+        FirstRejectedPrimitive = null;
         DisplayVramStart = 0;
         HorizontalDisplayRange = 0x00C6_0200;
         VerticalDisplayRange = 0x0003_C010;
@@ -197,6 +216,7 @@ public sealed partial class Gpu : IMmioDevice, IClockedDevice
         switch (address)
         {
             case Gp0Address:
+                DrainDmaFifo();
                 ExecuteGp0(value);
                 break;
 
@@ -208,6 +228,22 @@ public sealed partial class Gpu : IMmioDevice, IClockedDevice
                 throw new InvalidOperationException(
                     $"Endereço 0x{address:X8} não pertence à GPU.");
         }
+    }
+
+    private void DrainDmaFifo()
+    {
+        int wordsDrained = 0;
+        while (_dmaFifo.TryDequeue(out uint value))
+        {
+            ExecuteGp0(value);
+            wordsDrained++;
+        }
+
+        if (wordsDrained == 0)
+            return;
+
+        CpuGp0FifoSynchronizations++;
+        CpuGp0FifoWordsDrained += (uint)wordsDrained;
     }
 
     public string GetRegisterName(uint address)

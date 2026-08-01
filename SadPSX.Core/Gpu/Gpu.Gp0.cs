@@ -154,6 +154,10 @@ public sealed partial class Gpu
     {
         switch ((byte)(commandWord >> 24))
         {
+            case 0x01:
+                InvalidateColorLookupCache();
+                break;
+
             case 0x02:
                 FillVram(_gp0Packet);
                 break;
@@ -364,8 +368,9 @@ public sealed partial class Gpu
     private void UpdateGp0ReadyStatus()
     {
         bool collectingPacket = _gp0Packet.Count > 0;
+        bool polylineCanContinue = CanContinuePolyline();
         if (_dmaFifo.Count < 16 &&
-            !collectingPacket &&
+            (!collectingPacket || polylineCanContinue) &&
             !_cpuToVramActive)
             _status |= ReadyForCommandBit;
         else
@@ -382,6 +387,17 @@ public sealed partial class Gpu
             _status &= ~ReadyForDmaBlockBit;
 
         UpdateDmaRequest();
+    }
+
+    private bool CanContinuePolyline()
+    {
+        if (!_isPolylinePacket || _gp0Packet.Count == 0)
+            return false;
+
+        bool gouraud = (_gp0Packet[0] & (1u << 28)) != 0;
+        return gouraud
+            ? _gp0Packet.Count >= 4 && (_gp0Packet.Count & 1) == 0
+            : _gp0Packet.Count >= 3;
     }
 
     private static bool IsPolygonOrLinePacket(uint commandWord)
@@ -401,6 +417,7 @@ public sealed partial class Gpu
     {
         _dmaFifo.Clear();
         ResetPacketCollection();
+        InvalidateColorLookupCache();
         _cpuToVramActive = false;
         _cpuToVramPixelsRemaining = 0;
         _cpuToVramPixelIndex = 0;
@@ -410,5 +427,12 @@ public sealed partial class Gpu
         _status |= ReadyForCommandBit | ReadyForDmaBlockBit;
         _status &= ~ReadyForVramReadBit;
         UpdateDmaRequest();
+    }
+
+    private void InvalidateColorLookupCache()
+    {
+        _colorLookupCacheX = -1;
+        _colorLookupCacheY = -1;
+        _colorLookupCacheEntries = 0;
     }
 }

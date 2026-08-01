@@ -120,6 +120,22 @@ public sealed class Gp0CommandTests
     }
 
     [Fact]
+    public void RectangleWrapsCoordinateAfterAddingDrawingOffset()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        SendGp0(gpu, 0xE500_0400);
+
+        SendGp0(
+            gpu,
+            0x6000_00FF,
+            PackPosition(-1024, 0),
+            PackSize(1, 1));
+
+        Assert.Equal(0x001Fu, gpu.Vram.ReadPixel(0, 0));
+    }
+
+    [Fact]
     public void FlatTriangleRasterizesInsideDrawingArea()
     {
         var gpu = CreateGpu();
@@ -134,6 +150,42 @@ public sealed class Gp0CommandTests
 
         Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(11, 11));
         Assert.Equal(0u, gpu.Vram.ReadPixel(19, 19));
+    }
+
+    [Fact]
+    public void OversizedPolygonIsRejectedAndReported()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+
+        SendGp0(
+            gpu,
+            0x20FF_FFFF,
+            PackPosition(-1024, 0),
+            PackPosition(1023, 0),
+            PackPosition(0, 100));
+
+        Assert.Equal(1ul, gpu.RejectedPrimitiveCount);
+        Assert.Contains("V0=(-1024,0)", gpu.FirstRejectedPrimitive);
+        Assert.Contains("V1=(1023,0)", gpu.FirstRejectedPrimitive);
+    }
+
+    [Fact]
+    public void OversizedQuadHalfDoesNotDiscardValidTriangle()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+
+        SendGp0(
+            gpu,
+            0x28FF_0000,
+            PackPosition(10, 10),
+            PackPosition(20, 10),
+            PackPosition(10, 20),
+            PackPosition(20, 600));
+
+        Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(11, 11));
+        Assert.Equal(1ul, gpu.RejectedPrimitiveCount);
     }
 
     [Fact]
@@ -208,6 +260,65 @@ public sealed class Gp0CommandTests
             PackSize(1, 1));
 
         Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(60, 60));
+    }
+
+    [Fact]
+    public void ColorLookupCachePersistsUntilExplicitlyCleared()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 0, 0, 1, 1, 0x0000_0001);
+        UploadPixels(gpu, 32, 0, 2, 1, 0x03E0_0000);
+        SendGp0(gpu, 0xE100_0000);
+
+        DrawRawTextureRectangle(gpu, 50, 50, 0x0002_0000);
+        UploadPixels(gpu, 33, 0, 1, 1, 0x0000_7C00);
+        DrawRawTextureRectangle(gpu, 51, 50, 0x0002_0000);
+
+        Assert.Equal(0x03E0u, gpu.Vram.ReadPixel(50, 50));
+        Assert.Equal(0x03E0u, gpu.Vram.ReadPixel(51, 50));
+
+        SendGp0(gpu, 0x0100_0000);
+        DrawRawTextureRectangle(gpu, 52, 50, 0x0002_0000);
+
+        Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(52, 50));
+    }
+
+    [Fact]
+    public void ChangingColorLookupLocationReloadsTheCache()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 0, 0, 1, 1, 0x0000_0001);
+        UploadPixels(gpu, 32, 0, 2, 1, 0x03E0_0000);
+        UploadPixels(gpu, 48, 0, 2, 1, 0x7C00_0000);
+        SendGp0(gpu, 0xE100_0000);
+
+        DrawRawTextureRectangle(gpu, 50, 50, 0x0002_0000);
+        DrawRawTextureRectangle(gpu, 51, 50, 0x0003_0000);
+
+        Assert.Equal(0x03E0u, gpu.Vram.ReadPixel(50, 50));
+        Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(51, 50));
+    }
+
+    [Fact]
+    public void UntexturedDrawingDoesNotPopulateColorLookupCache()
+    {
+        var gpu = CreateGpu();
+        ConfigureFullDrawingArea(gpu);
+        UploadPixels(gpu, 0, 0, 1, 1, 0x0000_0001);
+        UploadPixels(gpu, 32, 0, 2, 1, 0x03E0_0000);
+        SendGp0(gpu, 0xE100_0000);
+
+        SendGp0(
+            gpu,
+            0x6000_00FF,
+            PackPosition(40, 40),
+            PackSize(1, 1));
+        UploadPixels(gpu, 33, 0, 1, 1, 0x0000_7C00);
+        DrawRawTextureRectangle(gpu, 50, 50, 0x0002_0000);
+
+        Assert.Equal(0x7C00u, gpu.Vram.ReadPixel(50, 50));
     }
 
     [Fact]
@@ -391,6 +502,20 @@ public sealed class Gp0CommandTests
             PackPosition(pixelX, pixelY),
             PackSize(width, height));
         SendGp0(gpu, words);
+    }
+
+    private static void DrawRawTextureRectangle(
+        GpuDevice gpu,
+        int pixelX,
+        int pixelY,
+        uint textureWord)
+    {
+        SendGp0(
+            gpu,
+            0x6500_0000,
+            PackPosition(pixelX, pixelY),
+            textureWord,
+            PackSize(1, 1));
     }
 
     private static void SendGp0(GpuDevice gpu, params uint[] words)
