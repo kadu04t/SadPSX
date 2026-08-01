@@ -26,14 +26,16 @@ O SadPSX já consegue:
 - Aplicar load delay em loads e `MFC0`.
 - Executar `LWL`, `LWR`, `SWL` e `SWR`.
 - Transferir dados pelo COP2 e executar todos os comandos documentados da GTE,
-  com MAC de 44 bits, flags de saturação e divisão UNR.
+  com wraps de MAC de 44 bits, flags de saturação e divisão UNR.
 - Processar exceções através do COP0.
 - Entregar interrupções mascaradas ao COP0.
 - Executar os três root counters e suas IRQs.
 - Responder aos handshakes básicos da GPU e da SPU.
-- Executar DMA2 temporizado para a GPU e DMA6 para tabelas OTC.
+- Executar DMA2 temporizado para a GPU, com posse do barramento e stalls da CPU,
+  e DMA6 para tabelas OTC.
 - Gerar dotclock, HBlank, VBlank e IRQ0 em modos NTSC/PAL.
-- Apresentar a saída de vídeo da GPU em uma janela SDL3 redimensionável.
+- Apresentar frames completos capturados no VBlank em uma janela SDL3
+  redimensionável.
 - Consultar controles digitais e analógicos pelo SIO0 e usar teclado ou
   gamepad SDL3, incluindo configuração DualShock.
 - Usar duas portas SIO0 com memory cards raw de 128 KiB e persistência `.mcr`.
@@ -45,10 +47,11 @@ O SadPSX já consegue:
 - Produzir traces com endereço, instrução crua e disassembly.
 - Validar uma execução da BIOS com métricas e critérios reproduzíveis.
 
-Na validação atual, a BIOS SCPH-1001 chega ao menu do console e o Rayman inicia,
-reproduz sua abertura, reconhece controles SDL3 e entra em gameplay. A
-compatibilidade ainda é experimental: existem defeitos visuais, falhas de
-áudio e jogos que podem não iniciar ou travar.
+Na validação atual, a BIOS SCPH-1001 chega ao menu do console e exibe saves dos
+memory cards. Rayman e Silent Hill chegaram a gameplay jogável, enquanto Final
+Fantasy VII chegou ao gameplay e às batalhas. A compatibilidade ainda é
+experimental: existem defeitos visuais, falhas de áudio e jogos que podem não
+iniciar ou travar.
 
 ## Jogos testados
 
@@ -58,7 +61,7 @@ garantem suporte a todas as regiões, revisões ou imagens de disco.
 | Jogo | Estado | Comportamento observado |
 | --- | --- | --- |
 | Rayman | Jogável | Chega ao gameplay, aceita controles SDL3 e concluiu um save no memory card. Gráficos e áudio ainda precisam de maior precisão. |
-| Silent Hill | In-game; requer novo teste | Chega ao título e renderiza gameplay. A detecção do controle falhou antes das correções mais recentes do SIO0; geometria da tela, cores, texturas e áudio continuam imprecisos. |
+| Silent Hill | Jogável; reteste longo pendente | Chega ao gameplay com controle SDL3 e saves persistentes funcionando. Correções recentes de GPU, GTE e DMA removeram as maiores corrupções e pausas periódicas; o áudio continua impreciso e a correção mais recente de polyline ainda precisa de um teste prolongado. |
 | Final Fantasy VII | In-game | Chega ao gameplay e às batalhas com o controle funcionando. Cores das FMVs e áudio estão imprecisos, e uma tentativa de save terminou em uma exceção CPU `BREAK` antes da confirmação da persistência. |
 
 Consulte o [relatório detalhado de compatibilidade e o procedimento de
@@ -103,8 +106,9 @@ A implementação interpretada do R3000A inclui:
 
 O COP2 implementa `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2` e `SWC2`, incluindo
 load delay nas transferências para a CPU. A GTE possui FIFOs e semântica dos
-registradores de dados/controle, MAC de 44 bits, flags de overflow, divisão UNR
-e todos os comandos documentados: `RTPS`, `RTPT`, `NCLIP`, `OP`, `DPCS`,
+registradores de dados/controle, wraps intermediários e finais de MAC de 44
+bits, flags de overflow, divisão UNR e todos os comandos documentados: `RTPS`,
+`RTPT`, `NCLIP`, `OP`, `DPCS`,
 `INTPL`, `MVMVA`, `NCDS`, `CDP`, `NCDT`, `NCCS`, `CC`, `NCS`, `NCT`, `SQR`,
 `DCPL`, `DPCT`, `AVSZ3`, `AVSZ4`, `GPF`, `GPL` e `NCCT`.
 
@@ -153,8 +157,11 @@ bus error e IRQ3. Os caminhos funcionais atuais são:
 - DMA1 por blocos do MDEC para a RAM.
 - DMA2 incremental em modo manual ou por blocos entre RAM e GPU, respeitando
   direção, DREQ, estado ocupado e atualização de `MADR`/`BCR`.
-- DMA2 linked-list processado por nós para envio de listas de comandos GP0.
+- DMA2 linked-list processado por nós para envio de listas de comandos GP0,
+  preservando uma requisição aceita entre nós e rejeitando listas cíclicas.
 - Arbitragem por prioridade do DPCR, incluindo desempate pelo número do canal.
+- Posse do barramento pela GPU, com stall da CPU enquanto uma transferência
+  DMA2 ativa mantém o barramento.
 - Backpressure do DMA2 por um FIFO de 16 words na GPU.
 - Chopping do DMA2 em burst com janelas programáveis de DMA/CPU e pausa de
   burst forçado.
@@ -189,14 +196,20 @@ CPU↔VRAM, polígonos, linhas, polylines e retângulos flat, Gouraud e
 texturizados, incluindo CLUT de 4/8 bits, texturas de 15 bits, clipping,
 offset de desenho, texture window, flips de sprites, máscara e
 semitransparência por texel. Polígonos usam a regra top-left e dithering 4x4
-para Gouraud e modulação. Primitivas que excedem os limites físicos são
-descartadas, e `Texpage` e os bits de prontidão de `GPUSTAT` acompanham o
-estado do parser e do FIFO DMA de 16 words.
+para Gouraud e modulação. O cache da CLUT persiste até uma escrita correspondente
+na VRAM ou reset, comandos da CPU e DMA mantêm sua ordem, e polylines longas
+expõem prontidão entre vértices. As duas metades de quads são validadas
+separadamente e coordenadas finais de sprites sofrem wrap após o offset de
+desenho. Primitivas que excedem os limites físicos são descartadas, e `Texpage`
+e os bits de prontidão de `GPUSTAT` acompanham o estado do parser e do FIFO DMA
+de 16 words.
 
 O gerador de vídeo converte clocks da CPU para o domínio da GPU, percorre
 scanlines NTSC/PAL, respeita as faixas de display configuradas por GP1, atualiza
 o campo par/ímpar de `GPUSTAT`, gera IRQ0 no início de VBlank e alimenta os
 root counters com dotclock e HBlank.
+O frontend captura frames completos no VBlank, mantém o frame mais recente para
+o renderer e contabiliza frames apresentados, descartados e repetidos.
 
 ### SPU
 
@@ -537,7 +550,8 @@ O SadPSX ainda não possui:
 - Sincronização de velocidade e execução da CPU em thread dedicada.
 - Rasterização completamente pixel-perfect e temporização do FIFO da GPU.
 - Transferências DMA do canal PIO.
-- Contenção de barramento, PIO e timing dos canais DMA além do DMA2.
+- Contenção exata do barramento nos canais DMA além do DMA2 e transferências
+  PIO.
 - Verificação em hardware de casos extremos não documentados e latência exata
   por comando da GTE.
 - Compatibilidade após a entrada do executável ainda está em validação com
@@ -547,7 +561,7 @@ O SadPSX ainda não possui:
 - Timing dos FIFOs e casos extremos de arredondamento do MDEC.
 - Saída de rumble DualShock, multitaps, controles especiais e formatos de
   memory card que não sejam raw.
-- Stalls da CPU e contenção precisa de barramento.
+- Latência exata por comando da CPU/GPU.
 - Implementação completa da instruction cache.
 
 Os demais periféricos MMIO ainda são stubs. O timing de vídeo cobre os sinais
@@ -556,10 +570,10 @@ meias scanlines e diferenças físicas entre clocks de consoles PAL/NTSC.
 
 ## Próximos passos
 
-Os próximos passos naturais são ampliar os testes de compatibilidade após o
-salto da BIOS para o `PS-X EXE`, refinar FIFO/timing da GPU, completar o
-reverb/interpolação da SPU e validar os novos controles e memory cards em mais
-jogos. O bloco futuro de otimização mantém benchmarks,
+Os próximos passos naturais são ampliar os testes prolongados de
+compatibilidade, refinar os casos extremos de rasterização/FIFO da GPU,
+completar o reverb/interpolação da SPU e validar controles e memory cards em
+mais jogos. O bloco futuro de otimização mantém benchmarks,
 execução da CPU em lotes, caminhos rápidos do barramento, scheduler de eventos
 e separação entre diagnóstico normal e trace completo.
 

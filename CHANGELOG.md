@@ -17,6 +17,10 @@ The project follows [Semantic Versioning](https://semver.org/).
 - XA-ADPCM decoding with 37.8/18.9 kHz resampling and CD-ROM channel filtering.
 - CD-ROM stereo volume matrix and SPU fixed/linear/exponential volume sweeps.
 - Integer MDEC IDCT driven by the uploaded scale table.
+- VBlank-driven frontend frame capture with presented, dropped, and duplicate
+  frame diagnostics.
+- Runtime GPU/DMA diagnostics for pending GP0 packets, rejected primitives,
+  transfer age, bus ownership, and completed transfer timing.
 
 ### Changed
 
@@ -26,6 +30,23 @@ The project follows [Semantic Versioning](https://semver.org/).
   immediately when written by DMA2.
 - MDEC coefficient placement, saturation, color conversion, and current-block
   status now follow the hardware data path more closely.
+- DMA2 now keeps an accepted GPU request across linked-list nodes, detects
+  cyclic lists, arbitrates bus ownership, and stalls the CPU while it owns the
+  bus.
+- GTE matrix and projection paths now reproduce intermediate and final 44-bit
+  wraps and saturation edge cases more closely.
+- GPU command processing now preserves CPU/DMA ordering, models CLUT cache
+  lifetime, streams long polylines without deadlocking `GPUSTAT`, culls both
+  halves of a quad independently, and wraps final sprite coordinates.
+
+### Fixed
+
+- Late-session geometry and color corruption observed in Silent Hill after
+  repeated textured rendering.
+- Periodic stale-frame flashes caused by presenting partially updated video
+  output instead of the newest completed VBlank frame.
+- A long flat-polyline command that could leave games polling GPU readiness
+  forever while the CPU continued executing.
 
 ## [0.0.1-beta.1] - 2026-07-27
 

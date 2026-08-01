@@ -9,7 +9,7 @@ No BIOS or game images are distributed with SadPSX.
 
 ## Test Environment
 
-The results below were observed on July 29, 2026 with:
+The results below were observed through July 31, 2026 with:
 
 - An SCPH-1001 BIOS dump.
 - BIN/CUE disc images.
@@ -27,8 +27,22 @@ ratings.
 | Game | Milestone | Controller | Memory card | Known issues |
 | --- | --- | --- | --- | --- |
 | Rayman | Playable gameplay | Working | Save observed working | Audio can stutter or play incorrectly. Performance and graphics still need accuracy work. |
-| Silent Hill | Reaches title and in-game rendering | Retest required | Not tested | The previous test did not detect the controller. Display geometry, colors, audio, and some textures were incorrect. The SIO0 controller protocol was corrected after this test. |
+| Silent Hill | Playable gameplay; extended retest pending | Working | Save and BIOS listing observed working | SIO0 input and memory-card persistence work. Recent GPU, GTE, DMA, and frame-presentation fixes removed the major color corruption and periodic stale-frame flashes. Audio remains inaccurate, and the latest long-polyline deadlock fix needs an extended retest. |
 | Final Fantasy VII | Reaches gameplay and battles | Working | Save not confirmed | Audio and FMV colors are inaccurate. A save attempt reached a CPU `BREAK` exception at `0x800A916C` before persistence could be confirmed. |
+
+## Recent Accuracy Results
+
+- The SCPH-1001 BIOS now reaches its menu without the temporary geometry
+  corruption seen in earlier tests and displays persisted memory-card saves.
+- Silent Hill no longer reports unhandled MMIO accesses in the latest sessions.
+- Hardware-style GTE 44-bit wrapping and persistent GPU CLUT caching fixed the
+  late-session vertex, texture, and color corruption reproduced during longer
+  Silent Hill runs.
+- DMA2 bus ownership, ordered GP0 submission, and VBlank frame capture removed
+  the repeated pause-and-flash behavior seen while the CPU continued running.
+- A later long flat-polyline stream exposed a `GPUSTAT` readiness deadlock. The
+  streaming handshake has been corrected, but the same long session still
+  needs to be repeated before the regression is considered closed.
 
 ## Regression Procedure
 
@@ -68,12 +82,13 @@ recent SIO0 transactions, and recent memory-card commands in the log.
 
 ## Next Retests
 
-1. **Silent Hill:** verify controller detection after the SIO0 FIFO and analog
-   configuration fixes.
+1. **Silent Hill:** repeat the longest available session and revisit the scene
+   that previously stalled on a flat polyline while monitoring pending GP0 and
+   DMA state.
 2. **Final Fantasy VII:** reproduce the save attempt and inspect the `F5` and
    `F6` histories if the exception returns.
-3. **Rayman:** save, restart, and reload the same card to verify persistence
-   across emulator sessions.
+3. **Rayman:** reload a persisted save and perform a longer gameplay test to
+   check audio, pacing, and rendering stability.
 
 The performance block now includes a reproducible benchmark, RAM fast paths,
 lower idle-device overhead, and separate normal/full diagnostic modes.

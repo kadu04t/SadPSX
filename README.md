@@ -19,11 +19,12 @@ SadPSX currently provides:
 
 - An interpreted MIPS R3000A CPU with delay slots, load delays, exceptions,
   COP0, interrupts, and unaligned memory operations.
-- A complete documented GTE command set with 44-bit MAC behavior, saturation
-  flags, and hardware-style UNR projection division.
+- A complete documented GTE command set with hardware-style 44-bit MAC wraps,
+  saturation flags, and UNR projection division.
 - A 1024×512 GPU VRAM, GP0 command parser, textured and Gouraud primitives,
   transfers, masking, dithering, and video timing.
-- DMA channels for MDEC, GPU, CD-ROM, SPU, and OTC transfers.
+- DMA channels for MDEC, GPU, CD-ROM, SPU, and OTC transfers, including GPU bus
+  ownership and CPU stalls.
 - CD-ROM commands, IRQs, ISO9660 boot discovery, BIN/CUE images, and CD-DA
   playback.
 - SPU voices with ADPCM, ADSR, mixing, and SDL3 audio output.
@@ -33,10 +34,11 @@ SadPSX currently provides:
 - Two SIO0 ports with raw 128 KiB memory cards and automatic `.mcr`
   persistence.
 - A basic launcher for selecting BIOS and BIN/CUE files.
-- An SDL3 video frontend and diagnostic console.
+- An SDL3 video frontend with VBlank frame capture and a diagnostic console.
 
-The SCPH-1001 BIOS reaches the console menu. Rayman has been tested through its
-intro and into playable gameplay with a controller. This is not a compatibility
+The SCPH-1001 BIOS reaches the console menu and displays persisted memory-card
+saves. Rayman and Silent Hill have reached playable gameplay, while Final
+Fantasy VII reaches gameplay and battles. This is not a compatibility
 guarantee: visual corruption, imperfect audio, missing features, hangs, and
 crashes are expected.
 
@@ -48,7 +50,7 @@ for every region, revision, or disc dump.
 | Game | Status | Observed behavior |
 | --- | --- | --- |
 | Rayman | Playable | Reaches gameplay, accepts SDL3 input, and has completed a memory-card save. Graphics and audio still need accuracy work. |
-| Silent Hill | In-game; retest required | Reaches the title and renders gameplay. Controller detection failed before the latest SIO0 fixes; display geometry, colors, textures, and audio remain inaccurate. |
+| Silent Hill | Playable; long retest pending | Reaches gameplay with working SDL3 input and persistent memory-card saves. Recent GPU, GTE, and DMA fixes removed major corruption and periodic stalls; audio remains inaccurate, and the latest long-polyline fix still needs an extended retest. |
 | Final Fantasy VII | In-game | Reaches gameplay and battles with working input. FMV colors and audio are inaccurate, and a save attempt ended in a CPU `BREAK` exception before persistence was confirmed. |
 
 See the [detailed compatibility report and regression
@@ -90,8 +92,9 @@ The interpreted R3000A implementation includes:
 
 COP2 implements `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2`, and `SWC2`, including
 load delays for transfers back to the CPU. The GTE provides data and control
-register semantics, FIFOs, 44-bit MAC overflow flags, UNR division, and all
-documented commands: `RTPS`, `RTPT`, `NCLIP`, `OP`, `DPCS`, `INTPL`, `MVMVA`,
+register semantics, FIFOs, intermediate and final 44-bit MAC wrapping, overflow
+flags, UNR division, and all documented commands: `RTPS`, `RTPT`, `NCLIP`,
+`OP`, `DPCS`, `INTPL`, `MVMVA`,
 `NCDS`, `CDP`, `NCDT`, `NCCS`, `CC`, `NCS`, `NCT`, `SQR`, `DCPL`, `DPCT`,
 `AVSZ3`, `AVSZ4`, `GPF`, `GPL`, and `NCCT`.
 
@@ -139,9 +142,12 @@ error, and IRQ3. Functional paths currently include:
 - DMA1 block transfers from MDEC to RAM.
 - Incremental DMA2 manual and block transfers between RAM and GPU, respecting
   direction, DREQ, busy state, and `MADR`/`BCR` updates.
-- Incremental DMA2 linked-list processing for GP0 command lists.
+- Incremental DMA2 linked-list processing for GP0 command lists, preserving an
+  accepted request across nodes and rejecting cyclic lists.
 - DPCR priority arbitration, including the documented channel-number tie
   breaker.
+- GPU bus ownership that stalls CPU execution while an active DMA2 transfer
+  holds the bus.
 - DMA2 backpressure through a 16-word GPU FIFO.
 - Burst-mode DMA2 chopping with programmable DMA/CPU windows and forced-burst
   pause behavior.
@@ -187,13 +193,20 @@ Implemented rendering paths include:
 - Per-pixel masking and texture transparency.
 - Top-left polygon fill rules and 4×4 dithering for Gouraud shading and
   modulation.
+- Persistent CLUT caching with invalidation on matching VRAM writes and reset.
+- Ordered CPU and DMA command submission, including streamed polyline readiness
+  at vertex boundaries.
+- Independent triangle rejection for quads and final sprite-coordinate
+  wrapping after the drawing offset.
 - Physical primitive-size rejection and GPU ready bits coordinated with the
   16-word DMA FIFO.
 
 The video generator converts CPU clocks into the GPU clock domain, advances
 NTSC or PAL scanlines, respects GP1 display ranges, updates the even/odd field
 flag, raises IRQ0 at VBlank, and supplies dotclock and HBlank signals to the
-root counters.
+root counters. The frontend captures complete frames at VBlank, keeps the most
+recent frame available to the renderer, and reports presented, dropped, and
+duplicate frame counts.
 
 ### SPU
 
@@ -502,7 +515,8 @@ SadPSX/
 - No speed synchronization or dedicated CPU thread.
 - GPU rasterization, FIFO consumption, and primitive execution timing are not
   pixel- or cycle-perfect.
-- DMA bus contention, PIO transfers, and timing outside DMA2 are incomplete.
+- Exact bus contention for DMA channels other than DMA2 and PIO transfers is
+  incomplete.
 - Some undocumented GTE edge cases and exact per-command latency still need
   hardware verification.
 - DualShock rumble output, multitaps, specialty controllers, and non-raw memory
@@ -511,7 +525,8 @@ SadPSX/
 - SPU Gaussian interpolation, reverb, and complete envelope accuracy need
   further work.
 - MDEC FIFO timing and hardware rounding edge cases need additional precision.
-- Bus contention, CPU stalls, and instruction cache behavior are approximate.
+- CPU/GPU per-command latency and instruction cache behavior remain
+  approximate.
 
 Other MMIO peripherals remain stubbed. Video timing covers the signals needed
 by the BIOS and timers but approximates interlacing, half scanlines, and
@@ -521,7 +536,7 @@ physical PAL/NTSC clock differences.
 
 The next accuracy blocks are:
 
-1. Precise GPU rasterization, FIFO behavior, and DMA interaction.
+1. Precise GPU rasterization and remaining FIFO edge cases.
 2. SPU Gaussian interpolation, reverb, and envelope edge cases.
 3. Precise MDEC FIFO timing and hardware rounding edge cases.
 4. Central event scheduling, bus contention, and timing accuracy.
