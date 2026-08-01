@@ -24,6 +24,61 @@ public sealed class GteCommandTests
     }
 
     [Fact]
+    public void RtpsReportsMac0OverflowFromHorizontalProjection()
+    {
+        var gte = CreateIdentityGte();
+        gte.WriteControlRegister(24, int.MaxValue);
+        gte.WriteControlRegister(26, 1000);
+        gte.WriteDataRegister(0, 0x7FFF);
+        gte.WriteDataRegister(1, 1000);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | 0x01));
+
+        Assert.NotEqual(0u, gte.ReadControlRegister(31) & (1u << 16));
+        Assert.NotEqual(0u, gte.ReadControlRegister(31) & (1u << 31));
+    }
+
+    [Fact]
+    public void RtpsUsesLimitModeForStoredIrCoordinates()
+    {
+        var gte = CreateIdentityGte();
+        gte.WriteControlRegister(26, 1000);
+        gte.WriteDataRegister(0, unchecked((uint)(ushort)-100));
+        gte.WriteDataRegister(1, 1000);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | (1u << 10) | 0x01));
+
+        Assert.Equal(0u, gte.ReadDataRegister(9));
+        Assert.Equal(0u, gte.ReadDataRegister(14));
+    }
+
+    [Fact]
+    public void RtpsChecksIr3SaturationFromUnscaledDepth()
+    {
+        var gte = CreateIdentityGte();
+        gte.WriteDataRegister(1, unchecked((uint)(ushort)-4096));
+
+        Assert.True(gte.ExecuteCommand((1u << 10) | 0x01));
+
+        Assert.Equal(0u, gte.ReadDataRegister(11));
+        Assert.Equal(0u, gte.ReadControlRegister(31) & (1u << 22));
+    }
+
+    [Fact]
+    public void RtpsWrapsFinalMatrixProductBeforeClampingDepth()
+    {
+        var gte = new SadPSX.Core.Gte.Gte();
+        gte.WriteControlRegister(4, 1);
+        gte.WriteControlRegister(7, int.MaxValue);
+        gte.WriteDataRegister(1, 8192);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | 0x01));
+
+        Assert.Equal(0u, gte.ReadDataRegister(19));
+        Assert.NotEqual(0u, gte.ReadControlRegister(31) & (1u << 28));
+    }
+
+    [Fact]
     public void RtptTransformsThreeVerticesAndAdvancesFifos()
     {
         var gte = CreateIdentityGte();
@@ -85,6 +140,36 @@ public sealed class GteCommandTests
         Assert.Equal(123u, gte.ReadDataRegister(9));
         Assert.Equal(unchecked((uint)-456), gte.ReadDataRegister(10));
         Assert.Equal(789u, gte.ReadDataRegister(11));
+    }
+
+    [Fact]
+    public void MvmvaReportsOverflowFromIntermediateMatrixSum()
+    {
+        var gte = CreateIdentityGte();
+        gte.WriteControlRegister(0, 0x8000_7FFF);
+        gte.WriteControlRegister(5, int.MaxValue);
+        WriteVector(gte, 0, 32767, 32767, 0);
+
+        Assert.True(gte.ExecuteCommand(ShiftFraction | 0x12));
+
+        Assert.NotEqual(0u, gte.ReadControlRegister(31) & (1u << 30));
+        Assert.NotEqual(0u, gte.ReadControlRegister(31) & (1u << 31));
+    }
+
+    [Fact]
+    public void MvmvaReproducesFarColorTranslationHardwareBug()
+    {
+        var gte = CreateIdentityGte();
+        gte.WriteControlRegister(21, 0x0100);
+        WriteVector(gte, 0, 0x1000, 0, 0);
+        uint farColorTranslation = 2u << 13;
+
+        Assert.True(
+            gte.ExecuteCommand(
+                ShiftFraction | farColorTranslation | 0x12));
+
+        Assert.Equal(0u, gte.ReadDataRegister(9));
+        Assert.Equal(0u, gte.ReadDataRegister(25));
     }
 
     [Fact]

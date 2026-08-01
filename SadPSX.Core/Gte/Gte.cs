@@ -181,32 +181,41 @@ public sealed class Gte
     private void TransformAndProject(int vectorIndex, uint command, bool updateIr0)
     {
         (int x, int y, int z) = ReadVector(vectorIndex);
-        long rawX = (long)ControlSigned(5) * 0x1000 +
-                    (long)MatrixElement(0, 0, 0) * x +
-                    (long)MatrixElement(0, 0, 1) * y +
-                    (long)MatrixElement(0, 0, 2) * z;
-        long rawY = (long)ControlSigned(6) * 0x1000 +
-                    (long)MatrixElement(0, 1, 0) * x +
-                    (long)MatrixElement(0, 1, 1) * y +
-                    (long)MatrixElement(0, 1, 2) * z;
-        long rawZ = (long)ControlSigned(7) * 0x1000 +
-                    (long)MatrixElement(0, 2, 0) * x +
-                    (long)MatrixElement(0, 2, 1) * y +
-                    (long)MatrixElement(0, 2, 2) * z;
+        long rawX = TransformMatrixRow(
+            row: 0,
+            x,
+            y,
+            z,
+            ControlSigned(5));
+        long rawY = TransformMatrixRow(
+            row: 1,
+            x,
+            y,
+            z,
+            ControlSigned(6));
+        long rawZ = TransformMatrixRow(
+            row: 2,
+            x,
+            y,
+            z,
+            ControlSigned(7));
 
-        int shift = (command & (1u << 19)) != 0 ? 12 : 0;
-        SetMacAndIr(1, rawX >> shift, limitMode: false);
-        SetMacAndIr(2, rawY >> shift, limitMode: false);
-        SetMacAndIr(3, rawZ >> shift, limitMode: false);
+        int shift = CommandShift(command);
+        bool limitMode = CommandLimitMode(command);
+        SetMacAndIr(1, rawX, shift, limitMode);
+        SetMacAndIr(2, rawY, shift, limitMode);
+        SetMac(3, rawZ, shift);
+        ClampIr(3, rawZ >> 12, limitMode: false);
+        _data[11] = unchecked((uint)ClampIrWithoutFlag(_mac[3], limitMode));
 
         PushDepth(ClampDepth(rawZ >> 12));
 
         long factor = Divide((ushort)_control[26], (ushort)_data[19]);
         long projectedX = factor * DataSigned16(9) + ControlSigned(24);
         long projectedY = factor * DataSigned16(10) + ControlSigned(25);
-        SetMac0(projectedY);
-
+        SetMac0(projectedX);
         int screenX = ClampScreen(projectedX >> 16, isY: false);
+        SetMac0(projectedY);
         int screenY = ClampScreen(projectedY >> 16, isY: true);
         PushScreenCoordinate((uint)(ushort)screenX | ((uint)(ushort)screenY << 16));
 
@@ -240,9 +249,9 @@ public sealed class Gte
         int d2 = MatrixElement(0, 1, 1);
         int d3 = MatrixElement(0, 2, 2);
 
-        SetMacAndIr(1, ((long)ir3 * d2 - (long)ir2 * d3) >> shift, limitMode);
-        SetMacAndIr(2, ((long)ir1 * d3 - (long)ir3 * d1) >> shift, limitMode);
-        SetMacAndIr(3, ((long)ir2 * d1 - (long)ir1 * d2) >> shift, limitMode);
+        SetMacAndIr(1, (long)ir3 * d2 - (long)ir2 * d3, shift, limitMode);
+        SetMacAndIr(2, (long)ir1 * d3 - (long)ir3 * d1, shift, limitMode);
+        SetMacAndIr(3, (long)ir2 * d1 - (long)ir1 * d2, shift, limitMode);
         return true;
     }
 
@@ -260,11 +269,36 @@ public sealed class Gte
 
         for (int row = 0; row < 3; row++)
         {
-            long value = (long)TranslationElement(translation, row) * 0x1000 +
-                         (long)MatrixElement(matrix, row, 0) * x +
-                         (long)MatrixElement(matrix, row, 1) * y +
-                         (long)MatrixElement(matrix, row, 2) * z;
-            SetMacAndIr(row + 1, value >> shift, limitMode);
+            int index = row + 1;
+            if (translation == 2)
+            {
+                long ignoredTranslation = SignExtendMacResult(
+                    index,
+                    (long)TranslationElement(translation, row) * 0x1000 +
+                    (long)MatrixElement(matrix, row, 0) * x);
+                ClampIr(
+                    index,
+                    unchecked((int)(ignoredTranslation >> shift)),
+                    limitMode: false);
+
+                long value = SignExtendMacResult(
+                    index,
+                    (long)MatrixElement(matrix, row, 1) * y);
+                value += (long)MatrixElement(matrix, row, 2) * z;
+                SetMacAndIr(index, value, shift, limitMode);
+                continue;
+            }
+
+            long result = translation == 3
+                ? MultiplyMatrixRow(matrix, row, x, y, z)
+                : MultiplyMatrixRow(
+                    matrix,
+                    row,
+                    x,
+                    y,
+                    z,
+                    TranslationElement(translation, row));
+            SetMacAndIr(index, result, shift, limitMode);
         }
 
         return true;
@@ -272,17 +306,21 @@ public sealed class Gte
 
     private bool ExecuteDepthCueColor(uint command)
     {
-        SetMacFromColor(_data[6], shift: 16);
-        FinishDepthCue(command);
+        FinishDepthCue(
+            command,
+            ColorComponentValue(_data[6], 1, 16),
+            ColorComponentValue(_data[6], 2, 16),
+            ColorComponentValue(_data[6], 3, 16));
         return true;
     }
 
     private bool ExecuteInterpolate(uint command)
     {
-        for (int index = 1; index <= 3; index++)
-            SetMac(index, (long)DataSigned16(8 + index) << 12);
-
-        FinishDepthCue(command);
+        FinishDepthCue(
+            command,
+            (long)DataSigned16(9) << 12,
+            (long)DataSigned16(10) << 12,
+            (long)DataSigned16(11) << 12);
         return true;
     }
 
@@ -291,8 +329,12 @@ public sealed class Gte
         int shift = CommandShift(command);
         bool limitMode = CommandLimitMode(command);
         ApplyColorMatrix(shift, limitMode);
-        MultiplyPrimaryColor();
-        ApplyDepthCue(shift, limitMode);
+        ApplyDepthCue(
+            shift,
+            limitMode,
+            PrimaryColorValue(1),
+            PrimaryColorValue(2),
+            PrimaryColorValue(3));
         PushColor();
         return true;
     }
@@ -302,24 +344,19 @@ public sealed class Gte
         int shift = CommandShift(command);
         bool limitMode = CommandLimitMode(command);
         ApplyColorMatrix(shift, limitMode);
-        MultiplyPrimaryColor();
-        ShiftMacVector(shift, limitMode);
+        for (int index = 1; index <= 3; index++)
+            SetMacAndIr(index, PrimaryColorValue(index), shift, limitMode);
         PushColor();
         return true;
     }
 
     private bool ExecuteDepthCueLight(uint command)
     {
-        uint color = _data[6];
-        for (int index = 1; index <= 3; index++)
-        {
-            int component = (byte)(color >> ((index - 1) * 8));
-            SetMac(
-                index,
-                (long)component * DataSigned16(8 + index) << 4);
-        }
-
-        FinishDepthCue(command);
+        FinishDepthCue(
+            command,
+            PrimaryColorValue(1),
+            PrimaryColorValue(2),
+            PrimaryColorValue(3));
         return true;
     }
 
@@ -327,8 +364,12 @@ public sealed class Gte
     {
         for (int iteration = 0; iteration < 3; iteration++)
         {
-            SetMacFromColor(_data[20], shift: 16);
-            FinishDepthCue(command);
+            uint color = _data[20];
+            FinishDepthCue(
+                command,
+                ColorComponentValue(color, 1, 16),
+                ColorComponentValue(color, 2, 16),
+                ColorComponentValue(color, 3, 16));
         }
 
         return true;
@@ -345,27 +386,34 @@ public sealed class Gte
             long accumulator = accumulate ? _mac[index] << shift : 0;
             long value = accumulator +
                          (long)DataSigned16(8 + index) * interpolation;
-            SetMacAndIr(index, value >> shift, limitMode);
+            SetMacAndIr(index, value, shift, limitMode);
         }
 
         PushColor();
         return true;
     }
 
-    private void SetMacFromColor(uint color, int shift)
+    private static long ColorComponentValue(uint color, int index, int shift)
     {
-        for (int index = 1; index <= 3; index++)
-        {
-            int component = (byte)(color >> ((index - 1) * 8));
-            SetMac(index, (long)component << shift);
-        }
+        int component = (byte)(color >> ((index - 1) * 8));
+        return (long)component << shift;
     }
 
-    private void FinishDepthCue(uint command)
+    private long PrimaryColorValue(int index)
+    {
+        int component = (byte)(_data[6] >> ((index - 1) * 8));
+        return (long)component * DataSigned16(8 + index) << 4;
+    }
+
+    private void FinishDepthCue(
+        uint command,
+        long mac1,
+        long mac2,
+        long mac3)
     {
         int shift = CommandShift(command);
         bool limitMode = CommandLimitMode(command);
-        ApplyDepthCue(shift, limitMode);
+        ApplyDepthCue(shift, limitMode, mac1, mac2, mac3);
         PushColor();
     }
 
@@ -385,12 +433,24 @@ public sealed class Gte
             ApplyLightMatrix(vectorIndex, shift, limitMode);
             ApplyColorMatrix(shift, limitMode);
 
-            if (multiplyColor)
-                MultiplyPrimaryColor();
             if (depthCue)
-                ApplyDepthCue(shift, limitMode);
+            {
+                ApplyDepthCue(
+                    shift,
+                    limitMode,
+                    PrimaryColorValue(1),
+                    PrimaryColorValue(2),
+                    PrimaryColorValue(3));
+            }
             else if (multiplyColor)
-                ShiftMacVector(shift, limitMode);
+            {
+                for (int index = 1; index <= 3; index++)
+                    SetMacAndIr(
+                        index,
+                        PrimaryColorValue(index),
+                        shift,
+                        limitMode);
+            }
 
             PushColor();
         }
@@ -406,11 +466,8 @@ public sealed class Gte
         (int x, int y, int z) = ReadVector(vectorIndex);
         for (int row = 0; row < 3; row++)
         {
-            long value =
-                (long)MatrixElement(1, row, 0) * x +
-                (long)MatrixElement(1, row, 1) * y +
-                (long)MatrixElement(1, row, 2) * z;
-            SetMacAndIr(row + 1, value >> shift, limitMode);
+            long value = MultiplyMatrixRow(1, row, x, y, z);
+            SetMacAndIr(row + 1, value, shift, limitMode);
         }
     }
 
@@ -421,50 +478,42 @@ public sealed class Gte
         int ir3 = DataSigned16(11);
         for (int row = 0; row < 3; row++)
         {
-            long value =
-                (long)ControlSigned(13 + row) * 0x1000 +
-                (long)MatrixElement(2, row, 0) * ir1 +
-                (long)MatrixElement(2, row, 1) * ir2 +
-                (long)MatrixElement(2, row, 2) * ir3;
-            SetMacAndIr(row + 1, value >> shift, limitMode);
+            long value = MultiplyMatrixRow(
+                2,
+                row,
+                ir1,
+                ir2,
+                ir3,
+                ControlSigned(13 + row));
+            SetMacAndIr(row + 1, value, shift, limitMode);
         }
     }
 
-    private void MultiplyPrimaryColor()
-    {
-        uint color = _data[6];
-        for (int index = 1; index <= 3; index++)
-        {
-            int component = (byte)(color >> ((index - 1) * 8));
-            long value =
-                (long)component * DataSigned16(8 + index) * 16;
-            SetMac(index, value);
-        }
-    }
-
-    private void ApplyDepthCue(int shift, bool limitMode)
+    private void ApplyDepthCue(
+        int shift,
+        bool limitMode,
+        long mac1,
+        long mac2,
+        long mac3)
     {
         int interpolation = DataSigned16(8);
         for (int index = 1; index <= 3; index++)
         {
-            long current = _mac[index];
+            long current = index switch
+            {
+                1 => mac1,
+                2 => mac2,
+                _ => mac3,
+            };
             long difference =
                 ((long)ControlSigned(20 + index) << 12) - current;
-            int differenceIr = ClampIr(
+            int differenceIr = SetMacAndIr(
                 index,
-                difference >> shift,
+                difference,
+                shift,
                 limitMode: false);
             long value = current + (long)differenceIr * interpolation;
-            SetMacAndIr(index, value >> shift, limitMode);
-        }
-    }
-
-    private void ShiftMacVector(int shift, bool limitMode)
-    {
-        for (int index = 1; index <= 3; index++)
-        {
-            long value = _mac[index];
-            SetMacAndIr(index, value >> shift, limitMode);
+            SetMacAndIr(index, value, shift, limitMode);
         }
     }
 
@@ -516,7 +565,7 @@ public sealed class Gte
         for (int index = 1; index <= 3; index++)
         {
             int value = DataSigned16(8 + index);
-            SetMacAndIr(index, ((long)value * value) >> shift, limitMode);
+            SetMacAndIr(index, (long)value * value, shift, limitMode);
         }
 
         return true;
@@ -552,7 +601,18 @@ public sealed class Gte
     private int MatrixElement(int matrix, int row, int column)
     {
         if (matrix == 3)
-            return 0;
+        {
+            int red = (byte)_data[6];
+            return (row, column) switch
+            {
+                (0, 0) => unchecked((short)(-(red << 4))),
+                (0, 1) => unchecked((short)(red << 4)),
+                (0, 2) => DataSigned16(8),
+                (1, _) => MatrixElement(0, 0, 2),
+                (2, _) => MatrixElement(0, 1, 1),
+                _ => 0,
+            };
+        }
 
         int registerBase = matrix switch
         {
@@ -578,26 +638,99 @@ public sealed class Gte
         return registerBase < 0 ? 0 : ControlSigned(registerBase + row);
     }
 
-    private void SetMacAndIr(int index, long value, bool limitMode)
+    private long MultiplyMatrixRow(
+        int matrix,
+        int row,
+        int x,
+        int y,
+        int z)
     {
-        long mac = SetMac(index, value);
-        _data[8 + index] = unchecked((uint)ClampIr(index, mac, limitMode));
+        int index = row + 1;
+        long value = SignExtendMacResult(
+            index,
+            (long)MatrixElement(matrix, row, 0) * x +
+            (long)MatrixElement(matrix, row, 1) * y);
+        return value + (long)MatrixElement(matrix, row, 2) * z;
     }
 
-    private long SetMac(int index, long value)
+    private long MultiplyMatrixRow(
+        int matrix,
+        int row,
+        int x,
+        int y,
+        int z,
+        int translation)
+    {
+        int index = row + 1;
+        long value = SignExtendMacResult(
+            index,
+            (long)translation * 0x1000 +
+            (long)MatrixElement(matrix, row, 0) * x);
+        value = SignExtendMacResult(
+            index,
+            value + (long)MatrixElement(matrix, row, 1) * y);
+        return value + (long)MatrixElement(matrix, row, 2) * z;
+    }
+
+    private long TransformMatrixRow(
+        int row,
+        int x,
+        int y,
+        int z,
+        int translation)
+    {
+        return SignExtendMacResult(
+            row + 1,
+            MultiplyMatrixRow(
+                matrix: 0,
+                row,
+                x,
+                y,
+                z,
+                translation));
+    }
+
+    private int SetMacAndIr(
+        int index,
+        long value,
+        int shift,
+        bool limitMode)
+    {
+        int mac = StoreMacValue(index, value, shift);
+        int ir = ClampIr(index, mac, limitMode);
+        _data[8 + index] = unchecked((uint)ir);
+        return ir;
+    }
+
+    private void SetMac(int index, long value, int shift = 0)
+    {
+        StoreMacValue(index, value, shift);
+    }
+
+    private int StoreMacValue(int index, long value, int shift)
+    {
+        CheckMacOverflow(index, value);
+        int truncated = unchecked((int)(value >> shift));
+        _mac[index] = truncated;
+        _data[24 + index] = unchecked((uint)truncated);
+        return truncated;
+    }
+
+    private long SignExtendMacResult(int index, long value)
+    {
+        CheckMacOverflow(index, value);
+        long truncated = value & MacMask;
+        return (truncated & (1L << 43)) != 0
+            ? truncated | ~MacMask
+            : truncated;
+    }
+
+    private void CheckMacOverflow(int index, long value)
     {
         if (value > MacMaximum)
             _flags |= 1u << (31 - index);
         if (value < MacMinimum)
             _flags |= 1u << (28 - index);
-
-        long truncated = value & MacMask;
-        if ((truncated & (1L << 43)) != 0)
-            truncated |= ~MacMask;
-
-        _mac[index] = truncated;
-        _data[24 + index] = unchecked((uint)truncated);
-        return truncated;
     }
 
     private void SetMac0(long value)
@@ -627,6 +760,12 @@ public sealed class Gte
         }
 
         return (int)value;
+    }
+
+    private static int ClampIrWithoutFlag(long value, bool limitMode)
+    {
+        int minimum = limitMode ? 0 : short.MinValue;
+        return (int)Math.Clamp(value, minimum, short.MaxValue);
     }
 
     private int ClampIr0(long value)
