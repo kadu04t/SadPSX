@@ -4,573 +4,182 @@
   <img src="docs/assets/sadpsx-logo.png" alt="SadPSX — A PlayStation Emulator" width="360">
 </p>
 
+<p align="center">
+  An experimental PlayStation emulator written in C# and .NET 10.
+</p>
+
 **English** | [Português (Brasil)](README.pt-BR.md)
 
-SadPSX is an experimental PlayStation emulator written in C# and .NET 10.
+SadPSX is built around hardware-oriented subsystem boundaries, deterministic
+timing, and diagnostics that make emulation failures easier to understand. The
+project is still an early beta: several commercial games reach gameplay, but
+graphics, audio, performance, and compatibility remain incomplete.
 
-The project prioritizes correctness, maintainable subsystem boundaries, and
-diagnostics that make hardware behavior easier to understand. It is an early
-beta: commercial software can boot and reach gameplay, but compatibility,
-graphics, audio, and timing are still incomplete.
+Current release: **0.0.2-beta.1**.
 
 ## Current Status
 
-SadPSX currently provides:
+- The SCPH-1001 BIOS reaches the console menu and displays persisted saves.
+- Rayman and Silent Hill reach playable gameplay.
+- Final Fantasy VII reaches gameplay and battles.
+- Digital and analog controllers work through keyboard or SDL3 gamepads.
+- Raw 128 KiB memory cards are persisted automatically as `.mcr` files.
+- BIN/CUE discs boot through the emulated BIOS and CD-ROM controller.
+- The fullscreen dashboard provides a game library, covers, settings, themes,
+  controller remapping, play history, and a boot animation.
 
-- An interpreted MIPS R3000A CPU with delay slots, load delays, exceptions,
-  COP0, interrupts, and unaligned memory operations.
-- A complete documented GTE command set with hardware-style 44-bit MAC wraps,
-  saturation flags, and UNR projection division.
-- A 1024×512 GPU VRAM, GP0 command parser, textured and Gouraud primitives,
-  transfers, masking, dithering, and video timing.
-- DMA channels for MDEC, GPU, CD-ROM, SPU, and OTC transfers, including GPU bus
-  ownership and CPU stalls.
-- CD-ROM commands, IRQs, ISO9660 boot discovery, BIN/CUE images, and CD-DA
-  playback.
-- SPU voices with ADPCM, ADSR, mixing, and SDL3 audio output.
-- MDEC RLE/IDCT decoding and DMA transfers.
-- Digital and analog controller input through keyboard or SDL3-compatible
-  gamepads, including DualShock configuration commands.
-- Two SIO0 ports with raw 128 KiB memory cards and automatic `.mcr`
-  persistence.
-- A basic launcher for selecting BIOS and BIN/CUE files.
-- An SDL3 video frontend with VBlank frame capture and a diagnostic console.
+| Area | State |
+| --- | --- |
+| CPU, COP0, GTE | Interpreted R3000A with exceptions, delays, interrupts, and the documented GTE command set |
+| GPU and DMA | Software GP0 rasterizer, 1 MiB VRAM, transfers, FIFO backpressure, linked lists, and bus arbitration |
+| CD-ROM and MDEC | BIN/CUE reading, ISO9660 boot discovery, CD-DA/XA paths, DMA, and software video decoding |
+| SPU | 24 voices, ADPCM, ADSR, mixing, noise, modulation, reverb foundation, and SDL3 output |
+| Input and storage | Two SIO0 ports, digital/analog pads, SDL3 mapping, and persistent memory cards |
+| Timing and diagnostics | Central cycle scheduler, root counters, IRQs, runtime console, traces, and automated tests |
 
-The SCPH-1001 BIOS reaches the console menu and displays persisted memory-card
-saves. Rayman and Silent Hill have reached playable gameplay, while Final
-Fantasy VII reaches gameplay and battles. This is not a compatibility
-guarantee: visual corruption, imperfect audio, missing features, hangs, and
-crashes are expected.
+Detailed implementation notes are available in the [technical documentation](docs/README.md).
 
-## Tested Games
+## Compatibility
 
-Compatibility results describe specific test sessions, not guaranteed support
-for every region, revision, or disc dump.
+Results describe specific development sessions, not guaranteed support for
+every region, revision, or disc image.
 
-| Game | Status | Observed behavior |
+| Game | Result | Main known issues |
 | --- | --- | --- |
-| Rayman | Playable | Reaches gameplay, accepts SDL3 input, and has completed a memory-card save. Graphics and audio still need accuracy work. |
-| Silent Hill | Playable; long retest pending | Reaches gameplay with working SDL3 input and persistent memory-card saves. Recent GPU, GTE, and DMA fixes removed major corruption and periodic stalls; audio remains inaccurate, and the latest long-polyline fix still needs an extended retest. |
-| Final Fantasy VII | In-game | Reaches gameplay and battles with working input. FMV colors and audio are inaccurate, and a save attempt ended in a CPU `BREAK` exception before persistence was confirmed. |
+| Rayman | Playable | Audio and performance remain inaccurate; some rendering issues remain |
+| Silent Hill | Playable | Long sessions still need regression testing; audio remains inaccurate |
+| Final Fantasy VII | In-game and battles | FMV colors and audio are inaccurate; save persistence is not yet confirmed |
 
-See the [detailed compatibility report and regression
-procedure](docs/COMPATIBILITY.md) for test limitations and the next retests.
-
-<p align="center">
-  <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman running in SadPSX" width="900">
-</p>
-
-<p align="center"><em>Rayman running in SadPSX during a compatibility test.</em></p>
+See [COMPATIBILITY.md](docs/COMPATIBILITY.md) for the test environment,
+diagnostic procedure, and current regression targets.
 
 <p align="center">
-  <img src="docs/screenshots/silent-hill-gameplay.png" alt="Silent Hill running in SadPSX" width="900">
+  <img src="docs/screenshots/rayman-gameplay.png" alt="Rayman running in SadPSX" width="31%">
+  <img src="docs/screenshots/silent-hill-gameplay.png" alt="Silent Hill running in SadPSX" width="31%">
+  <img src="docs/screenshots/final-fantasy-vii-battle.png" alt="Final Fantasy VII running in SadPSX" width="31%">
 </p>
 
-<p align="center"><em>Silent Hill reaching in-game rendering, with accuracy issues still visible.</em></p>
+## Quick Start
 
-<p align="center">
-  <img src="docs/screenshots/final-fantasy-vii-battle.png" alt="Final Fantasy VII battle running in SadPSX" width="900">
-</p>
+SadPSX does not include a PlayStation BIOS or game images. Use only dumps made
+legally from hardware and media you own.
 
-<p align="center"><em>Final Fantasy VII running a playable battle in SadPSX.</em></p>
+### Release build
 
-## Implemented Components
+1. Download the Windows archive from [GitHub Releases](https://github.com/kadu04t/SadPSX/releases).
+2. Extract the archive and run `SadPSX.exe`.
+3. Select a legally dumped 512 KiB BIOS.
+4. Add a game folder or select a `.cue`/`.bin` image.
+5. Choose a game from the dashboard and start it.
 
-### CPU
+### From the repository
 
-The interpreted R3000A implementation includes:
-
-- Arithmetic operations with and without overflow.
-- Logical operations, comparisons, and immediate or variable shifts.
-- Multiplication and division with hardware-specific edge cases.
-- Conditional branches, `J`, `JAL`, `JR`, and `JALR`.
-- Branch delay slots and load delays.
-- Loads and stores, including `LWL`, `LWR`, `SWL`, and `SWR`.
-- `HI`, `LO`, and the hardwired `$zero` register.
-
-### GTE/COP2
-
-COP2 implements `MFC2`, `MTC2`, `CFC2`, `CTC2`, `LWC2`, and `SWC2`, including
-load delays for transfers back to the CPU. The GTE provides data and control
-register semantics, FIFOs, intermediate and final 44-bit MAC wrapping, overflow
-flags, UNR division, and all documented commands: `RTPS`, `RTPT`, `NCLIP`,
-`OP`, `DPCS`, `INTPL`, `MVMVA`,
-`NCDS`, `CDP`, `NCDT`, `NCCS`, `CC`, `NCS`, `NCT`, `SQR`, `DCPL`, `DPCT`,
-`AVSZ3`, `AVSZ4`, `GPF`, `GPL`, and `NCCT`.
-
-### COP0
-
-COP0 currently provides:
-
-- Processor identification, control, and debug registers.
-- Syscall, breakpoint, overflow, address, bus, and reserved-instruction
-  exceptions.
-- Branch-delay exception tracking through the `BD` flag.
-- Exception vector selection through `SR.BEV`.
-- `MFC0`, `MTC0`, and `RFE`.
-- Per-register read and write permissions.
-- A PlayStation-compatible R3000A `PRID`.
-- Writable-state reset while preserving fixed register bits.
-- Software interrupts and the hardware interrupt line through `CAUSE.bit10`.
-
-### Interrupts
-
-The interrupt controller implements `I_STAT` and `I_MASK`, including all eleven
-sources, masking, acknowledge-by-writing-zero behavior, and IRQ propagation to
-COP0. Delivery respects `SR.IEc`, COP0 interrupt masks, and branch delay slot
-completion.
-
-### Timers
-
-The three root counters implement counter, mode, and target registers in
-`0x1F801100-0x1F801128`, including:
-
-- System clock and the Timer 2 divide-by-eight source.
-- Reset on target or overflow.
-- IRQ on target or overflow.
-- One-shot, repeat, pulse, and toggle modes.
-- Target and overflow flags cleared after reads.
-- Basic synchronization with HBlank, VBlank, and dotclock.
-
-### DMA
-
-The DMA controller implements registers for all seven channels, `DPCR`, and
-`DICR`, including priorities, master enable, completion flags, acknowledge, bus
-error, and IRQ3. Functional paths currently include:
-
-- DMA0 block transfers from RAM to MDEC.
-- DMA1 block transfers from MDEC to RAM.
-- Incremental DMA2 manual and block transfers between RAM and GPU, respecting
-  direction, DREQ, busy state, and `MADR`/`BCR` updates.
-- Incremental DMA2 linked-list processing for GP0 command lists, preserving an
-  accepted request across nodes and rejecting cyclic lists.
-- DPCR priority arbitration, including the documented channel-number tie
-  breaker.
-- GPU bus ownership that stalls CPU execution while an active DMA2 transfer
-  holds the bus.
-- DMA2 backpressure through a 16-word GPU FIFO.
-- Burst-mode DMA2 chopping with programmable DMA/CPU windows and forced-burst
-  pause behavior.
-- DMA3 block transfers from the CD-ROM FIFO to RAM.
-- DMA4 block transfers between RAM and SPU.
-- DMA6/OTC reverse ordering-table generation.
-- 24-bit DMA addressing with RAM mirrors.
-
-The PIO channel preserves its registers but does not execute transfers yet.
-
-### CD-ROM
-
-The CD-ROM controller implements register banks, FIFOs, IRQ2, status commands,
-seeking, and reading. `ReadN` and `ReadS` continuously deliver sectors at
-single or double speed through buffered `DataReady`, `DataEnd`, pause, and DMA3
-behavior.
-
-CUE images may describe multiple data and audio tracks used by `GetTN`, `GetTD`,
-`GetlocL`, and `GetlocP`. `Init`, `GetID`, `SetSession`, `SeekL`, `SeekP`, and
-`ReadTOC` model motor state, seeking, and delayed secondary responses. When a
-disc is mounted, the ISO9660 reader locates `SYSTEM.CNF` and reports the boot
-executable path, LBA, and size.
-
-Command responses have a minimum controller latency so the BIOS cannot miss an
-IRQ before preparing its asynchronous wait. `Play` advances CD-DA tracks at 75
-sectors per second, sends stereo PCM to the SPU, and produces `INT4` when an
-AutoPause track ends.
-
-### GPU
-
-The GPU implements `GP0/GPUREAD`, `GP1/GPUSTAT`, a 1024×512 16-bit VRAM, and a
-GP0 packet parser used by both CPU writes and DMA2.
-
-Implemented rendering paths include:
-
-- VRAM fill and copy commands.
-- CPU-to-VRAM and VRAM-to-CPU transfers.
-- Flat, Gouraud, textured, and semi-transparent polygons.
-- Flat and Gouraud lines and polylines.
-- Flat and textured rectangles and sprites.
-- 4-bit and 8-bit CLUT textures and 15-bit direct textures.
-- Drawing-area clipping, drawing offsets, texture windows, and sprite flips.
-- Per-pixel masking and texture transparency.
-- Top-left polygon fill rules and 4×4 dithering for Gouraud shading and
-  modulation.
-- Persistent CLUT caching with invalidation on matching VRAM writes and reset.
-- Ordered CPU and DMA command submission, including streamed polyline readiness
-  at vertex boundaries.
-- Independent triangle rejection for quads and final sprite-coordinate
-  wrapping after the drawing offset.
-- Physical primitive-size rejection and GPU ready bits coordinated with the
-  16-word DMA FIFO.
-
-The video generator converts CPU clocks into the GPU clock domain, advances
-NTSC or PAL scanlines, respects GP1 display ranges, updates the even/odd field
-flag, raises IRQ0 at VBlank, and supplies dotclock and HBlank signals to the
-root counters. The frontend captures complete frames at VBlank, keeps the most
-recent frame available to the renderer, and reports presented, dropped, and
-duplicate frame counts.
-
-### SPU
-
-The SPU preserves its MMIO registers, reflects `SPUCNT` mode in `SPUSTAT`,
-provides 512 KiB of sound RAM, and accepts manual or DMA4 transfers.
-
-Its 24 voices decode ADPCM blocks and implement fractional interpolation,
-pitch modulation, noise generation, loop, key on/off, ADSR, fixed volume, and
-volume sweeps. The mixer receives CD-DA and decoded XA-ADPCM audio, writes the
-hardware capture buffers for CD audio and voices 1/3, and can raise IRQ9 from
-voice, capture, or transfer Sound RAM accesses. The frontend sends 44.1 kHz
-output to an SDL3 audio stream.
-
-### MDEC
-
-The Macroblock Decoder accepts commands from the CPU or DMA0, loads
-quantization and scale tables, and decodes RLE blocks through an IDCT.
-The integer two-pass IDCT uses the uploaded hardware scale matrix, applies the
-MDEC zigzag and saturation rules, and reports the current macroblock through
-the status register. Monochrome 4/8 bpp and color 15/24 bpp output is exposed
-through its FIFO and can return to RAM through DMA1.
-
-### Memory
-
-The bus currently routes:
-
-| Region | Physical address | Status |
-| --- | --- | --- |
-| Main RAM | `0x00000000-0x001FFFFF` | Implemented |
-| RAM mirrors | `0x00200000-0x007FFFFF` | Implemented |
-| Expansion Region 1 | `0x1F000000-0x1F7FFFFF` | Open-bus `0xFF` stub |
-| Scratchpad | `0x1F800000-0x1F8003FF` | Implemented |
-| I/O ports | `0x1F801000-0x1F801FFF` | Partial |
-| Expansion Region 2 | `0x1F802000-0x1F803FFF` | BIOS POST; remaining area stubbed |
-| BIOS ROM | `0x1FC00000-0x1FC7FFFF` | Implemented |
-| Memory Control | `0x1F801000-0x1F801020`, `0x1F801060` | Implemented |
-| SIO0 | `0x1F801040-0x1F80104F` | Digital controller, timing, and IRQ7 |
-| Interrupt Control | `0x1F801070-0x1F801077` | Implemented |
-| DMA | `0x1F801080-0x1F8010FF` | DMA0-DMA4 and DMA6 functional |
-| Root Counters | `0x1F801100-0x1F801128` | Implemented |
-| GPU ports | `0x1F801810-0x1F801817` | Functional GP0/GP1 and VRAM |
-| MDEC | `0x1F801820-0x1F801827` | Commands, tables, RLE/IDCT, and FIFO |
-| CD-ROM ports | `0x1F801800-0x1F801803` | Commands, FIFOs, IRQ2, and sectors |
-| SPU registers | `0x1F801C00-0x1F801DFF` | Voices, ADPCM, ADSR, RAM, and DMA |
-| Cache Control | `0xFFFE0130` | Register implemented |
-
-Writes while the instruction cache is isolated cannot alter main RAM,
-preserving code loaded by the BIOS during initialization.
-
-### Timing
-
-`Cycles` counts executed instructions. `ClockCycles` tracks approximate costs
-for instruction fetches, loads, and stores while distinguishing cached and
-uncached RAM, scratchpad, MMIO, Expansion 1, and BIOS accesses.
-
-Devices implement `IClockedDevice` and are registered with the central
-`TimingScheduler`. After every instruction, `PsxMachine` advances one absolute
-system clock and dispatches the elapsed cycles to devices in deterministic
-registration order. Devices can schedule cancellable callbacks at absolute
-future boundaries; the scheduler splits elapsed time at those boundaries so
-all devices observe the event at the same system cycle. Video timing uses
-integer accumulators to convert CPU clocks into NTSC or PAL clocks without
-floating-point drift.
-
-The model does not yet cover complete bus contention, instruction cache
-behavior, or accurate internal timing for every instruction and transfer.
-
-## Beta Download
-
-The initial Windows package is built as a self-contained `win-x64` executable,
-so users do not need to install the .NET runtime.
-
-SadPSX does **not** include a BIOS or any game. You must provide:
-
-- A legally dumped 512 KiB PlayStation BIOS.
-- Legally obtained BIN/CUE disc images from media you own.
-
-To build the package locally:
+Open the dashboard:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1
+dotnet run -c Release --project SadPSX.Frontend
 ```
 
-The archive is created under `artifacts/releases/`.
-
-## Running
-
-From source:
+Start directly with a BIOS and optional disc:
 
 ```powershell
 dotnet run -c Release --project SadPSX.Frontend -- `
-  .\BiosPS1\SCPH1001.BIN `
-  --disc .\GamesPS1\Game.cue `
-  --memory-card .\card1.mcr
+  .\BiosPS1\SCPH1001.BIN --disc .\GamesPS1\Game.cue
 ```
 
-From the Windows release:
+The command-line diagnostic frontend remains available through
+`SadPSX.Cli`.
 
-```powershell
-.\SadPSX.exe .\SCPH1001.BIN --disc .\Game.cue
-```
+## Default Controls
 
-Double-clicking `SadPSX.exe` without arguments opens a small launcher. Select a
-512 KiB BIOS, optionally select a `.cue` or `.bin` disc image, and press
-**Start**. Command-line arguments remain available for development and
-automation.
+| Keyboard | PlayStation control |
+| --- | --- |
+| Arrow keys | D-pad |
+| `Z` / `X` | Cross / Circle |
+| `A` / `S` | Square / Triangle |
+| `Q` / `W` | L1 / R1 |
+| `E` / `D` | L2 / R2 |
+| `Enter` / `Backspace` | Start / Select |
+| `Space` | Pause or resume |
+| `R` | Reset console |
+| `F1`-`F6` | Runtime diagnostics |
+| `F7` / `F8` | MMIO trace / controller type |
+| `F11` | Toggle fullscreen |
+| `Escape` | Return to dashboard or exit |
 
-The first memory card defaults to
-`%LOCALAPPDATA%\SadPSX\MemoryCards\card1.mcr`. Use `--memory-card` to select
-another raw 128 KiB `.mcr` image. A formatted image is created when the selected
-file does not exist.
+SDL3-compatible controllers can be remapped from the frontend settings.
 
-Controls:
-
-- SDL3-compatible Xbox, PlayStation, and generic gamepads are detected while
-  the emulator is running.
-- Arrow keys: D-pad.
-- `Z` / `X`: Cross / Circle.
-- `A` / `S`: Square / Triangle.
-- `Q` / `W`: L1 / R1; `E` / `D`: L2 / R2.
-- `Enter`: Start; `Backspace`: Select.
-- `Space`: Pause; `R`: Reset; `F11`: Fullscreen; `Esc`: Exit.
-
-Diagnostic shortcuts:
-
-- `F1`: General CPU, video, IRQ, CD-ROM, DMA, and MMIO state.
-- `F2`: Current instruction and CPU registers.
-- `F3`: Unhandled MMIO accesses.
-- `F4`: Recent CPU exceptions.
-- `F5`: Recent SIO0 controller and memory-card transactions.
-- `F6`: Completed memory-card commands, sectors, checksums, and results.
-- `F7`: Toggle full handled-MMIO tracing. This can reduce performance.
-
-Logs are written to the `Logs/` directory next to the executable.
-
-Use `--batch N` to adjust how many instructions run between window event
-polls. `--paused` starts with emulation paused, and `--frames N` limits the
-number of presented frames for automated diagnostics.
-
-## Building
+## Building and Testing
 
 Requirements:
 
-- [.NET SDK 10](https://dotnet.microsoft.com/download)
-
-Commands:
-
-```powershell
-dotnet build SadPSX.slnx
-dotnet test SadPSX.slnx
-```
-
-The command-line diagnostic runner is also available:
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- Windows x64 for the provided release package
+- SDL3 native libraries are restored through the project packages
 
 ```powershell
-dotnet run -c Release --project SadPSX.Cli -- `
-  .\BiosPS1\SCPH1001.BIN 1000000 --validate
+dotnet restore SadPSX.slnx
+dotnet build SadPSX.slnx -c Release
+dotnet test SadPSX.Tests -c Release
 ```
 
-Without an instruction count, the CLI executes 100 instructions. Use `--trace`
-to print and retain executed instructions. Normal CLI execution skips
-disassembly and trace allocation.
-
-Run the dependency-free performance benchmark in Release mode:
+Create a self-contained Windows release archive:
 
 ```powershell
-dotnet run -c Release --project SadPSX.Benchmarks -- 10000000
+.\scripts\publish.ps1 -Version 0.0.2-beta.1 -Runtime win-x64
 ```
 
-It reports CPU loops from BIOS and RAM, full-machine timing, and paired RAM
-reads/writes. Compare results using the same configuration and machine.
+## Documentation
 
-### Diagnostic CLI
+- [Technical documentation index](docs/README.md)
+- [Architecture and timing](docs/ARCHITECTURE.md)
+- [CPU, COP0, and GTE](docs/CPU.md)
+- [GPU and video](docs/GPU.md)
+- [SPU and audio](docs/AUDIO.md)
+- [CD-ROM, MDEC, DMA, timers, input, and storage](docs/DEVICES.md)
+- [Frontend](docs/FRONTEND.md)
+- [Compatibility](docs/COMPATIBILITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
-The CLI supports breakpoints, checkpoints, simple loop detection, and MMIO
-reports:
-
-```powershell
-dotnet run -c Release --project SadPSX.Cli -- `
-  .\BiosPS1\SCPH1001.BIN 1000000 `
-  --checkpoint 0xBFC00000 `
-  --break-pc 0x80000080 `
-  --break-memory 0x1F801060 `
-  --loop-threshold 100000 `
-  --mmio-log `
-  --dump-registers
-```
-
-- `--break-pc` stops before executing the selected address.
-- `--break-memory` stops after a data read or write at the selected address.
-- `--checkpoint` records the first cycle that reaches a PC.
-- `--loop-threshold` stops after a PC is visited too many times.
-- `--mmio-log` prints initial MMIO accesses and a per-address summary.
-- `--dump-registers` prints GPRs, `HI/LO`, PC, and COP0 registers.
-- `--validate` runs a smoke test and summarizes clocks, PCs, MMIO, and
-  exceptions.
-- `--disc` mounts a BIN or CUE image for headless boot tests.
-- `--stop-on-unexpected` stops at the first unexpected exception and prints the
-  opcode, nearby memory, and registers.
-
-Addresses accept decimal or hexadecimal notation with the `0x` prefix.
-
-For a long Release-mode boot investigation:
-
-```powershell
-dotnet run -c Release --project SadPSX.Cli -- `
-  .\BiosPS1\SCPH1001.BIN 600000000 `
-  --disc ".\GamesPS1\Game\Game.cue" `
-  --stop-on-unexpected
-```
-
-### Automated Validation
-
-Build the project, run all tests, and validate one million BIOS instructions:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\validate.ps1
-```
-
-Select another BIOS image or instruction count:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\validate.ps1 `
-  -BiosPath .\BiosPS1\SCPH1001.BIN `
-  -Instructions 2000000
-```
-
-Use `-NoRestore` when dependencies are already available and the machine is
-offline. Validation succeeds when the requested count completes without host
-failure, reserved instruction, coprocessor-unusable exception, or bus error.
-Emulated syscalls and other expected exceptions remain reported but do not
-automatically fail validation.
-
-## Tests
-
-Run the complete suite with:
-
-```powershell
-dotnet test SadPSX.slnx
-```
-
-The tests cover:
-
-- Instruction decoding, arithmetic, logic, shifts, branches, and jumps.
-- Delay slots, load delays, multiplication, division, loads, and stores.
-- Unaligned loads and stores at every byte offset.
-- COP0 exceptions, registers, permissions, and interrupt delivery.
-- COP2 transfers, every documented GTE command, FIFOs, saturation, MAC
-  overflow, and UNR division.
-- CPU cycle accounting and device synchronization.
-- Root counters, targets, dividers, synchronization, and IRQ generation.
-- GPU control handshakes, GP0 packets, VRAM transfers, and rasterization.
-- NTSC/PAL timing, dotclock, HBlank, VBlank, and IRQ0.
-- DMA0-DMA4 block transfers, DMA2 linked lists, DMA6/OTC, and IRQ3.
-- MDEC tables, integer IDCT, status, output formats, and DMA0/1.
-- SPU voices, ADPCM, pitch, ADSR, volume sweeps, stereo mixing, and DMA4.
-- CD-DA/XA-ADPCM playback, resampling, CD volume matrix, AutoPause, and `INT4`.
-- SDL3 video, audio, gamepad input, and frontend behavior.
-- SIO0 timing, digital/analog controllers, DualShock configuration, memory
-  card read/write persistence, IRQ7, and BIOS POST.
-- Address translation, bus routing, RAM, scratchpad, BIOS, and open bus.
-- Disassembly, tracing, validation reports, and complete MIPS test programs.
-
-## Project Structure
+## Project Layout
 
 ```text
-SadPSX/
-├── SadPSX.Core/
-│   ├── Cpu/          # R3000A, COP0, and instruction decoding
-│   ├── Gte/          # COP2 and Geometry Transformation Engine
-│   ├── Gpu/          # GPU commands, rasterization, VRAM, and video timing
-│   ├── Memory/       # RAM, scratchpad, BIOS, and memory regions
-│   ├── Bus/          # Address translation and MMIO routing
-│   ├── Bios/         # BIOS ROM loading
-│   ├── CdRom/        # Disc images, commands, sectors, and CD-DA
-│   ├── Dma/          # DMA channels and controller
-│   ├── Mdec/         # Macroblock decoder
-│   ├── Timers/       # Root counters
-│   ├── Interrupts/   # I_STAT, I_MASK, and IRQ sources
-│   ├── Spu/          # Sound processing, voices, and sound RAM
-│   ├── Controllers/  # SIO0, digital/analog pads, and memory cards
-│   ├── Debugging/    # Disassembly, tracing, and validation
-│   └── PsxMachine.cs
-├── SadPSX.Cli/       # Headless BIOS and disc diagnostic runner
-├── SadPSX.Frontend/  # SDL3 video, audio, input, and interactive loop
-├── SadPSX.Tests/
-│   ├── Cpu/
-│   ├── Memory/
-│   ├── Gpu/
-│   ├── Dma/
-│   ├── Mdec/
-│   ├── Gte/
-│   └── Controllers/
-├── BiosPS1/          # Local BIOS dumps, ignored by Git
-├── GamesPS1/         # Local disc images, ignored by Git
-├── docs/
-│   ├── assets/       # Project logo and application icon
-│   └── screenshots/  # Compatibility screenshots
-├── scripts/          # Validation and release packaging
-└── SadPSX.slnx
+SadPSX.Core/       Emulated PlayStation hardware
+SadPSX.Frontend/   SDL3 dashboard, video, audio, and input
+SadPSX.Cli/        Diagnostic command-line tools
+SadPSX.Tests/      Unit, conformance, and regression tests
+SadPSX.Benchmarks/ Reproducible performance benchmarks
+docs/              Technical and compatibility documentation
+scripts/           Validation and release packaging
 ```
 
 ## Known Limitations
 
-- No complete settings interface, persistent configuration, or game library.
-- No speed synchronization or dedicated CPU thread.
-- GPU rasterization, FIFO consumption, and primitive execution timing are not
-  pixel- or cycle-perfect.
-- Exact bus contention for DMA channels other than DMA2 and PIO transfers is
-  incomplete.
-- Some undocumented GTE edge cases and exact per-command latency still need
-  hardware verification.
-- DualShock rumble output, multitaps, specialty controllers, and non-raw memory
-  card formats are not implemented.
-- CD-ROM periodic `Play` reports and XA emphasis are missing.
-- SPU Gaussian interpolation, reverb, and complete envelope accuracy need
-  further work.
-- MDEC FIFO timing and hardware rounding edge cases need additional precision.
-- CPU/GPU per-command latency and instruction cache behavior remain
-  approximate.
+- Audio timing, reverb, XA playback, and mixing still need accuracy work.
+- The interpreter does not always sustain real-time emulation on every host.
+- GPU rasterization and MDEC color conversion still produce visible defects.
+- Compatibility is limited and untested games may hang, crash, or fail to boot.
+- Save states, debugger UI, netplay, achievements, and hardware rendering are
+  not implemented.
 
-Other MMIO peripherals remain stubbed. Video timing covers the signals needed
-by the BIOS and timers but approximates interlacing, half scanlines, and
-physical PAL/NTSC clock differences.
+## Philosophy
 
-## Roadmap
-
-The next accuracy blocks are:
-
-1. Precise GPU rasterization and remaining FIFO edge cases.
-2. SPU Gaussian interpolation, reverb, and envelope edge cases.
-3. Precise MDEC FIFO timing and hardware rounding edge cases.
-4. Central event scheduling, bus contention, and timing accuracy.
-5. Compatibility tests, regression diagnostics, and performance optimization.
-
-## Project Philosophy
-
-SadPSX is being designed from the beginning around a hardware-fidelity
-philosophy, while ProjectPSX was designed primarily to remain simple and
-educational. SadPSX still aims to be readable and useful for learning, but
-accuracy and reproducible hardware behavior take priority over shortcuts.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes.
-Release history is documented in [CHANGELOG.md](CHANGELOG.md).
+SadPSX is designed for high hardware fidelity and maintainable subsystem
+boundaries. ProjectPSX was designed primarily to be simple and educational;
+SadPSX instead uses explicit timing, hardware state, and diagnostics as its
+foundation while remaining open and educational.
 
 ## Legal Notice
 
-No Sony BIOS, game images, keys, or proprietary runtime assets are included.
-Use only BIOS and disc images dumped legally from hardware and media you own.
-Compatibility screenshots remain the property of their respective copyright
-holders and are shown only to document emulator behavior.
-
-SadPSX is an independent project and is not affiliated with, associated with,
-authorized by, endorsed by, or in any way officially connected with Sony
-Interactive Entertainment.
+PlayStation is a trademark of Sony Interactive Entertainment. SadPSX is an
+independent project and is not affiliated with or endorsed by Sony. No BIOS,
+games, encryption keys, or copyrighted console software are distributed.
 
 ## License
 
-SadPSX is licensed under the [GNU General Public License v3](LICENSE)
-(`GPL-3.0-only`).
+SadPSX is licensed under the [GNU GPL v3](LICENSE).
 
-The goal of this project is to remain open, educational, and collaborative.
-If you distribute modified versions of SadPSX, those modifications must also
-remain open under the GPL.
-
-Distributed dependency notices are listed in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The goal is to remain open, educational, and collaborative. If you distribute
+modified versions of SadPSX, those modifications must also remain open under
+the GPL.

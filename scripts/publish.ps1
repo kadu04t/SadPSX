@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = "0.0.1-beta.1",
+    [string]$Version = "0.0.2-beta.1",
     [ValidatePattern('^[a-z0-9]+-[a-z0-9]+$')]
     [string]$Runtime = "win-x64",
     [switch]$NoRestore

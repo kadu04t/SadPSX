@@ -1,4 +1,4 @@
-SadPSX 0.0.1 Beta 1
+SadPSX 0.0.2 Beta 1
 ====================
 
 SadPSX is an experimental PlayStation emulator.
@@ -7,11 +7,18 @@ QUICK START
 -----------
 
 1. Run SadPSX.exe.
-2. Click SELECT BIOS and choose a legally dumped 512 KiB PlayStation BIOS.
-3. Optionally click SELECT .CUE / .BIN and choose a disc image.
-4. Click START.
+2. Select a legally dumped 512 KiB PlayStation BIOS.
+3. Add a game folder or select a CUE/BIN disc image.
+4. Choose a game from the dashboard and start it.
 
-The BIOS and game files are not included.
+BIOS and game files are not included.
+
+FRONTEND
+--------
+
+The fullscreen dashboard includes a game library, cover lookup, themes,
+wallpapers, controller remapping, settings, play history, and a boot animation.
+Escape or the gamepad Guide button returns from gameplay to the dashboard.
 
 KEYBOARD
 --------
@@ -25,17 +32,18 @@ Enter            Start
 Backspace        Select
 Space            Pause
 R                Reset
-F1-F4            Diagnostics
+F1-F6            Diagnostics
+F7 / F8          MMIO trace / controller type
 F11              Fullscreen
-Escape           Exit
+Escape           Dashboard / exit
 
 COMMAND LINE
 ------------
 
 SadPSX.exe BIOS.BIN --disc GAME.CUE
 
-This is an early compatibility release. Visual corruption, inaccurate audio,
-missing features, hangs, and crashes are expected.
+This remains an early compatibility release. Visual corruption, inaccurate
+audio, performance problems, hangs, and crashes are expected.
 
 SadPSX is not affiliated with Sony Interactive Entertainment. Use only BIOS
 and disc images obtained legally from hardware and media you own.

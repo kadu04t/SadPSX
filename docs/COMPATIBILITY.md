@@ -9,12 +9,13 @@ No BIOS or game images are distributed with SadPSX.
 
 ## Test Environment
 
-The results below were observed through July 31, 2026 with:
+The results below were observed through August 2, 2026 with:
 
 - An SCPH-1001 BIOS dump.
 - BIN/CUE disc images.
 - A Release configuration build.
 - SDL3 video, audio, and gamepad output.
+- The console-style fullscreen dashboard or direct command-line startup.
 - A standard analog controller connected to port 1.
 - A raw 128 KiB memory card connected to port 1.
 

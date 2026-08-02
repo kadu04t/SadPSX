@@ -6,47 +6,66 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.2-beta.1] - 2026-08-02
+
 ### Added
 
-- Central timing scheduler with deterministic device advancement.
-- Cancellable central timing events dispatched at exact system-cycle
-  boundaries.
-- SPU noise generation, pitch modulation, capture buffers, and IRQ9.
-- GPU DMA FIFO with backpressure, DPCR priority arbitration, and burst
-  chopping.
-- XA-ADPCM decoding with 37.8/18.9 kHz resampling and CD-ROM channel filtering.
-- CD-ROM stereo volume matrix and SPU fixed/linear/exponential volume sweeps.
-- Integer MDEC IDCT driven by the uploaded scale table.
-- VBlank-driven frontend frame capture with presented, dropped, and duplicate
-  frame diagnostics.
-- Runtime GPU/DMA diagnostics for pending GP0 packets, rejected primitives,
-  transfer age, bus ownership, and completed transfer timing.
+- Console-style SDL3 dashboard with boot animation, game carousel, fullscreen
+  navigation, themes, wallpapers, UI sounds, and persistent settings.
+- Game-library scanning, BIN/CUE deduplication, disc identity, optional metadata
+  and cover lookup, play history, and accumulated play time.
+- Persistent controller remapping and digital/analog controller selection.
+- Two SIO0 ports with analog/DualShock protocol support and raw 128 KiB memory
+  cards persisted as `.mcr` files.
+- Central timing scheduler with cancellable events dispatched at exact system
+  cycle boundaries.
+- SPU noise, pitch modulation, capture buffers, IRQ9, fractional interpolation,
+  current-volume reads, volume sweeps, and expanded ADSR behavior.
+- XA-ADPCM decoding, channel filtering, resampling, and CD-ROM stereo volume
+  matrix.
+- Integer MDEC IDCT driven by uploaded scale tables.
+- Runtime histories for SIO0 transactions, memory-card commands, CPU breakpoints,
+  GPU packets, DMA transfers, and frame presentation.
+- Technical documentation split by architecture, CPU, GPU, audio, devices, and
+  frontend.
 
 ### Changed
 
-- SPU voices now use fractional sample interpolation and more accurate
-  exponential ADSR attack timing.
-- GPU DMA words are consumed on GPU clock ticks instead of executing
-  immediately when written by DMA2.
-- MDEC coefficient placement, saturation, color conversion, and current-block
-  status now follow the hardware data path more closely.
-- DMA2 now keeps an accepted GPU request across linked-list nodes, detects
-  cyclic lists, arbitrates bus ownership, and stalls the CPU while it owns the
-  bus.
-- GTE matrix and projection paths now reproduce intermediate and final 44-bit
-  wraps and saturation edge cases more closely.
-- GPU command processing now preserves CPU/DMA ordering, models CLUT cache
-  lifetime, streams long polylines without deadlocking `GPUSTAT`, culls both
-  halves of a quad independently, and wraps final sprite coordinates.
+- GTE now implements the documented command set with improved 44-bit MAC wrap,
+  saturation, projection division, color commands, and overflow behavior.
+- GPU command processing now preserves CPU/DMA ordering, uses a bounded FIFO,
+  models backpressure, retains CLUT cache state, and streams long polylines.
+- DMA2 now models priorities, linked-list request state, chopping, bus ownership,
+  CPU stalls, cyclic-list detection, and GPU arbitration.
+- Video presentation captures completed VBlank frames and reports captured,
+  presented, dropped, and repeated frames.
+- MDEC coefficient placement, saturation, color conversion, block status, and
+  output packing follow the hardware data path more closely.
+- The core uses optimized memory and timing paths while retaining deterministic
+  device order.
+- Documentation now keeps the root README focused on status, compatibility, and
+  usage.
 
 ### Fixed
 
-- Late-session geometry and color corruption observed in Silent Hill after
-  repeated textured rendering.
-- Periodic stale-frame flashes caused by presenting partially updated video
-  output instead of the newest completed VBlank frame.
-- A long flat-polyline command that could leave games polling GPU readiness
-  forever while the CPU continued executing.
+- Late-session geometry, texture, and color corruption reproduced in Silent
+  Hill.
+- Periodic stale-frame flashes caused by presenting partially updated frames.
+- GPU readiness deadlocks during long flat-polyline streams.
+- Several SIO0 selection, acknowledge, analog-pad, and memory-card protocol
+  failures affecting commercial games.
+- Breakpoint diagnostics now preserve the original instruction and delay-slot
+  context.
+
+### Known Issues
+
+- Audio can clip, stutter, echo, or run incorrectly depending on the game and
+  host performance.
+- GPU rasterization and MDEC color conversion still have visible inaccuracies.
+- The interpreted CPU does not sustain real time on every host.
+- Compatibility remains limited and untested games may fail to boot or hang.
+- Final Fantasy VII save persistence has not been confirmed after a CPU
+  breakpoint interrupted the test.
 
 ## [0.0.1-beta.1] - 2026-07-27
 
