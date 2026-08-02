@@ -5,6 +5,8 @@ using SadPSX.Frontend.Audio;
 using SadPSX.Frontend.Diagnostics;
 using SadPSX.Frontend.Input;
 using SadPSX.Frontend.Launcher;
+using SadPSX.Frontend.Library;
+using SadPSX.Frontend.UI.Hosting;
 using SadPSX.Frontend.Video;
 using SDL3;
 
@@ -26,6 +28,12 @@ internal sealed class FrontendApplication : IDisposable
     private readonly SdlGamepadInput _gamepadInput;
     private readonly int _instructionBatchSize;
     private readonly int? _frameLimit;
+    private readonly bool _allowDashboardReturn;
+    private readonly string? _discPath;
+    private readonly string? _discSerial;
+    private readonly GameActivityStore _activityStore = new();
+    private readonly Stopwatch _activePlayTime = new();
+    private readonly FrontendSettingsStore _settingsStore = new();
     private readonly Stopwatch _runtime = Stopwatch.StartNew();
 
     private TimeSpan _lastFrameTime;
@@ -35,8 +43,12 @@ internal sealed class FrontendApplication : IDisposable
     private bool _running = true;
     private bool _paused;
     private bool _analogController;
+    private FrontendSessionResult _sessionResult = FrontendSessionResult.Quit;
 
-    private FrontendApplication(FrontendOptions options)
+    private FrontendApplication(
+        FrontendOptions options,
+        SdlFrontendHost host,
+        bool allowDashboardReturn)
     {
         _machine = new PsxMachine();
         _memoryCard = MemoryCard.LoadOrCreate(
@@ -45,17 +57,39 @@ internal sealed class FrontendApplication : IDisposable
         _machine.LoadBios(options.BiosPath);
         if (options.DiscPath is not null)
             _machine.LoadDisc(options.DiscPath);
+        _discSerial = _machine.Bus.CdRom.BootInfo is { } bootInfo
+            ? GameIdentityService.ParseSerial(bootInfo.ExecutablePath)
+            : null;
         _diagnosticConsole = new DiagnosticConsole(_machine);
         _instructionBatchSize = options.InstructionBatchSize;
         _frameLimit = options.FrameLimit;
+        _allowDashboardReturn = allowDashboardReturn;
+        _discPath = options.DiscPath;
         _paused = options.StartPaused;
-        _videoOutput = new SdlVideoOutput("SadPSX", 960, 720);
+        FrontendSettings settings = _settingsStore.Load();
+        _videoOutput = new SdlVideoOutput(
+            host,
+            settings.VideoScaling,
+            settings.SmoothVideo);
         _audioOutput = new SdlAudioOutput();
+        IController initialController = settings.DefaultAnalogController
+            ? new AnalogController()
+            : new DigitalController();
+        _machine.Bus.Sio0.AttachController(1, initialController);
+        _analogController = settings.DefaultAnalogController;
         _controllerInput = new ControllerInputState(
-            _machine.Bus.Sio0.ControllerPort1);
-        _gamepadInput = new SdlGamepadInput(_controllerInput);
+            initialController);
+        _gamepadInput = new SdlGamepadInput(
+            _controllerInput,
+            settings.EffectiveControllerMapping);
         _machine.Bus.VideoTiming.VBlankStarted += OnVBlankStarted;
         _audioOutput.SetPaused(_paused);
+        if (_discPath is not null)
+        {
+            TryBeginActivitySession();
+            if (!_paused)
+                _activePlayTime.Start();
+        }
     }
 
     public static int Run(string[] arguments)
@@ -102,18 +136,56 @@ internal sealed class FrontendApplication : IDisposable
 
         try
         {
-            if (options is null)
+            FrontendSettingsStore settingsStore = new();
+            FrontendSettings settings = settingsStore.Load();
+            if (options is not null)
             {
-                using var launcher = new SdlLauncher();
-                options = launcher.Run();
-                if (options is null)
-                    return 0;
+                using var directHost = new SdlFrontendHost(settings.Fullscreen);
+                using var directApplication = new FrontendApplication(
+                    options,
+                    directHost,
+                    allowDashboardReturn: false);
+                directApplication.PrintStartup(options);
+                directApplication.MainLoop();
+                return 0;
             }
 
-            using var application = new FrontendApplication(options);
-            application.PrintStartup(options);
-            application.MainLoop();
-            return 0;
+            if (settings.ShowBootAnimation)
+            {
+                using var splash = new SdlSplashScreen();
+                splash.Run();
+            }
+
+            using var host = new SdlFrontendHost(settings.Fullscreen);
+            bool showBootAnimation = true;
+            while (true)
+            {
+                FrontendOptions? selectedOptions;
+                using (var launcher = new SdlLauncher(
+                           host,
+                           showBootAnimation))
+                {
+                    selectedOptions = launcher.Run();
+                }
+
+                if (selectedOptions is null)
+                    return 0;
+
+                FrontendSessionResult result;
+                using (var application = new FrontendApplication(
+                           selectedOptions,
+                           host,
+                           allowDashboardReturn: true))
+                {
+                    application.PrintStartup(selectedOptions);
+                    result = application.MainLoop();
+                }
+
+                if (result == FrontendSessionResult.Quit)
+                    return 0;
+
+                showBootAnimation = false;
+            }
         }
         catch (Exception exception)
         {
@@ -130,6 +202,8 @@ internal sealed class FrontendApplication : IDisposable
     public void Dispose()
     {
         _machine.Bus.VideoTiming.VBlankStarted -= OnVBlankStarted;
+        _activePlayTime.Stop();
+        TryCompleteActivitySession();
         if (_memoryCard.IsDirty)
             _memoryCard.Save();
         _gamepadInput.Dispose();
@@ -138,7 +212,7 @@ internal sealed class FrontendApplication : IDisposable
         _diagnosticConsole.Dispose();
     }
 
-    private void MainLoop()
+    private FrontendSessionResult MainLoop()
     {
         try
         {
@@ -171,6 +245,8 @@ internal sealed class FrontendApplication : IDisposable
                     _lastTitleTime = now;
                 }
             }
+
+            return _sessionResult;
         }
         catch (Exception exception)
         {
@@ -201,6 +277,7 @@ internal sealed class FrontendApplication : IDisposable
             {
                 case SDL.EventType.Quit:
                 case SDL.EventType.WindowCloseRequested:
+                    _sessionResult = FrontendSessionResult.Quit;
                     _running = false;
                     break;
 
@@ -230,6 +307,15 @@ internal sealed class FrontendApplication : IDisposable
 
                 case SDL.EventType.GamepadButtonDown:
                 case SDL.EventType.GamepadButtonUp:
+                    if (_allowDashboardReturn &&
+                        currentEvent.GButton.Down &&
+                        (SDL.GamepadButton)currentEvent.GButton.Button ==
+                        SDL.GamepadButton.Guide)
+                    {
+                        ReturnToDashboard();
+                        break;
+                    }
+
                     _gamepadInput.HandleButton(
                         currentEvent.GButton.Which,
                         (SDL.GamepadButton)currentEvent.GButton.Button,
@@ -278,12 +364,25 @@ internal sealed class FrontendApplication : IDisposable
         switch (scancode)
         {
             case SDL.Scancode.Escape:
-                _running = false;
+                if (_allowDashboardReturn)
+                    ReturnToDashboard();
+                else
+                {
+                    _sessionResult = FrontendSessionResult.Quit;
+                    _running = false;
+                }
                 break;
 
             case SDL.Scancode.Space:
                 _paused = !_paused;
                 _audioOutput.SetPaused(_paused);
+                if (_discPath is not null)
+                {
+                    if (_paused)
+                        _activePlayTime.Stop();
+                    else
+                        _activePlayTime.Start();
+                }
                 Console.WriteLine(
                     _paused
                         ? "Emulação pausada."
@@ -299,39 +398,50 @@ internal sealed class FrontendApplication : IDisposable
                 break;
 
             case SDL.Scancode.F1:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintStatus();
                 break;
 
             case SDL.Scancode.F2:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintCpu();
                 break;
 
             case SDL.Scancode.F3:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintMmio();
                 break;
 
             case SDL.Scancode.F4:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintExceptions();
                 break;
 
             case SDL.Scancode.F5:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintSio0();
                 break;
 
             case SDL.Scancode.F6:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.PrintMemoryCards();
                 break;
 
             case SDL.Scancode.F7:
+                DiagnosticTerminal.EnsureVisible();
                 _diagnosticConsole.ToggleFullMmioTrace();
                 break;
 
             case SDL.Scancode.F8:
+                DiagnosticTerminal.EnsureVisible();
                 ToggleControllerType();
                 break;
 
             case SDL.Scancode.F11:
-                _videoOutput.ToggleFullscreen();
+                bool fullscreen = _videoOutput.ToggleFullscreen();
+                FrontendSettingsStore settingsStore = new();
+                FrontendSettings settings = settingsStore.Load();
+                settingsStore.Save(settings with { Fullscreen = fullscreen });
                 break;
         }
     }
@@ -371,10 +481,67 @@ internal sealed class FrontendApplication : IDisposable
         _analogController = !_analogController;
         _machine.Bus.Sio0.AttachController(1, controller);
         _controllerInput.SetController(controller);
+        try
+        {
+            FrontendSettings settings = _settingsStore.Load();
+            _settingsStore.Save(settings with
+            {
+                DefaultAnalogController = _analogController,
+            });
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
         Console.WriteLine(
             _analogController
                 ? "Controle da porta 1: DualShock."
                 : "Controle da porta 1: digital.");
+    }
+
+    private void ReturnToDashboard()
+    {
+        _sessionResult = FrontendSessionResult.ReturnToDashboard;
+        _running = false;
+    }
+
+    private void TryBeginActivitySession()
+    {
+        try
+        {
+            _activityStore.BeginSession(
+                _discPath!,
+                _discSerial,
+                DateTimeOffset.UtcNow);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private void TryCompleteActivitySession()
+    {
+        if (_discPath is null)
+            return;
+
+        try
+        {
+            _activityStore.CompleteSession(
+                _discPath,
+                _discSerial,
+                _activePlayTime.Elapsed);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private void PrintStartup(FrontendOptions options)
@@ -420,7 +587,10 @@ internal sealed class FrontendApplication : IDisposable
         Console.WriteLine("  F7      Alternar trace MMIO completo");
         Console.WriteLine("  F8      Alternar controle Digital/DualShock");
         Console.WriteLine("  F11     Alternar tela cheia");
-        Console.WriteLine("  Esc     Sair");
+        Console.WriteLine(
+            _allowDashboardReturn
+                ? "  Esc     Voltar ao dashboard"
+                : "  Esc     Sair");
         Console.WriteLine();
     }
 

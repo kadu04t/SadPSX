@@ -1,34 +1,35 @@
 using System.Runtime.InteropServices;
 using SadPSX.Core.Gpu;
+using SadPSX.Frontend.App;
+using SadPSX.Frontend.UI.Hosting;
 using SDL3;
 
 namespace SadPSX.Frontend.Video;
 
 internal sealed class SdlVideoOutput : IDisposable
 {
-    private readonly nint _window;
+    private readonly SdlFrontendHost _host;
     private readonly nint _renderer;
     private readonly VideoFrameBuffer _frameBuffer = new();
+    private readonly VideoScalingMode _scalingMode;
+    private readonly SDL.ScaleMode _textureScaleMode;
 
     private nint _texture;
     private int _textureWidth;
     private int _textureHeight;
     private bool _disposed;
 
-    public SdlVideoOutput(string title, int width, int height)
+    public SdlVideoOutput(
+        SdlFrontendHost host,
+        VideoScalingMode scalingMode,
+        bool smoothVideo)
     {
-        if (!SDL.CreateWindowAndRenderer(
-                title,
-                width,
-                height,
-                SDL.WindowFlags.Resizable,
-                out _window,
-                out _renderer))
-        {
-            throw new InvalidOperationException(
-                $"Não foi possível criar a janela SDL3: {SDL.GetError()}");
-        }
-
+        _host = host;
+        _renderer = host.Renderer;
+        _scalingMode = scalingMode;
+        _textureScaleMode = smoothVideo
+            ? SDL.ScaleMode.Linear
+            : SDL.ScaleMode.Nearest;
         SDL.SetRenderVSync(_renderer, 0);
     }
 
@@ -48,9 +49,7 @@ internal sealed class SdlVideoOutput : IDisposable
 
         GpuDisplayInfo display = _frameBuffer.Display;
         EnsureTexture(display.Width, display.Height);
-
-        Span<byte> bytes = MemoryMarshal.AsBytes(
-            _frameBuffer.Pixels);
+        Span<byte> bytes = MemoryMarshal.AsBytes(_frameBuffer.Pixels);
         if (!SDL.UpdateTexture(
                 _texture,
                 nint.Zero,
@@ -58,14 +57,13 @@ internal sealed class SdlVideoOutput : IDisposable
                 display.Width * sizeof(uint)))
         {
             throw new InvalidOperationException(
-                $"Não foi possível atualizar a textura SDL3: {SDL.GetError()}");
+                $"Could not update video texture: {SDL.GetError()}");
         }
 
         EnsureSuccess(
             SDL.SetRenderDrawColor(_renderer, 0, 0, 0, 255),
-            "configurar a cor de fundo");
-        EnsureSuccess(SDL.RenderClear(_renderer), "limpar o frame");
-
+            "set video background");
+        EnsureSuccess(SDL.RenderClear(_renderer), "clear video frame");
         if (!SDL.RenderTexture(
                 _renderer,
                 _texture,
@@ -73,10 +71,10 @@ internal sealed class SdlVideoOutput : IDisposable
                 nint.Zero))
         {
             throw new InvalidOperationException(
-                $"Não foi possível apresentar a textura SDL3: {SDL.GetError()}");
+                $"Could not present video texture: {SDL.GetError()}");
         }
 
-        EnsureSuccess(SDL.RenderPresent(_renderer), "apresentar o frame");
+        EnsureSuccess(SDL.RenderPresent(_renderer), "present video frame");
         _frameBuffer.MarkPresented();
         return true;
     }
@@ -84,34 +82,27 @@ internal sealed class SdlVideoOutput : IDisposable
     public void SetTitle(string title)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        EnsureSuccess(
-            SDL.SetWindowTitle(_window, title),
-            "atualizar o título da janela");
+        _host.SetTitle(title);
     }
 
-    public void ToggleFullscreen()
+    public bool ToggleFullscreen()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        bool fullscreen =
-            (SDL.GetWindowFlags(_window) & SDL.WindowFlags.Fullscreen) != 0;
-
-        if (!SDL.SetWindowFullscreen(_window, !fullscreen))
+        if (!_host.ToggleFullscreen())
         {
             Console.Error.WriteLine(
-                $"Não foi possível alternar tela cheia: {SDL.GetError()}");
+                $"Could not toggle fullscreen: {SDL.GetError()}");
         }
+
+        return _host.IsFullscreen;
     }
 
     public void Dispose()
     {
         if (_disposed)
             return;
-
         if (_texture != nint.Zero)
             SDL.DestroyTexture(_texture);
-
-        SDL.DestroyRenderer(_renderer);
-        SDL.DestroyWindow(_window);
         _disposed = true;
     }
 
@@ -139,30 +130,35 @@ internal sealed class SdlVideoOutput : IDisposable
         if (_texture == nint.Zero)
         {
             throw new InvalidOperationException(
-                $"Não foi possível criar a textura SDL3: {SDL.GetError()}");
+                $"Could not create video texture: {SDL.GetError()}");
         }
 
         EnsureSuccess(
-            SDL.SetTextureScaleMode(_texture, SDL.ScaleMode.Nearest),
-            "configurar o filtro da textura");
-        EnsureSuccess(
-            SDL.SetRenderLogicalPresentation(
-                _renderer,
-                width,
-                height,
-                SDL.RendererLogicalPresentation.Letterbox),
-            "configurar a apresentação do frame");
-
+            SDL.SetTextureScaleMode(_texture, _textureScaleMode),
+            "set video scaling");
+        _host.ConfigurePresentation(
+            width,
+            height,
+            GetPresentation(_scalingMode));
         _textureWidth = width;
         _textureHeight = height;
     }
+
+    internal static SDL.RendererLogicalPresentation GetPresentation(
+        VideoScalingMode scalingMode) => scalingMode switch
+    {
+        VideoScalingMode.Stretch => SDL.RendererLogicalPresentation.Stretch,
+        VideoScalingMode.IntegerScale =>
+            SDL.RendererLogicalPresentation.IntegerScale,
+        _ => SDL.RendererLogicalPresentation.Letterbox,
+    };
 
     private static void EnsureSuccess(bool succeeded, string operation)
     {
         if (!succeeded)
         {
             throw new InvalidOperationException(
-                $"Não foi possível {operation} no SDL3: {SDL.GetError()}");
+                $"Could not {operation} with SDL3: {SDL.GetError()}");
         }
     }
 }

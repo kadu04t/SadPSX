@@ -7,37 +7,20 @@ internal sealed class SdlGamepadInput : IDisposable
 {
     private const short TriggerThreshold = 16_000;
 
-    private static readonly (SDL.GamepadButton Source, ControllerButton Target)[]
-        ButtonMappings =
-        [
-            (SDL.GamepadButton.South, ControllerButton.Cross),
-            (SDL.GamepadButton.East, ControllerButton.Circle),
-            (SDL.GamepadButton.West, ControllerButton.Square),
-            (SDL.GamepadButton.North, ControllerButton.Triangle),
-            (SDL.GamepadButton.Back, ControllerButton.Select),
-            (SDL.GamepadButton.Start, ControllerButton.Start),
-            (SDL.GamepadButton.LeftStick, ControllerButton.L3),
-            (SDL.GamepadButton.RightStick, ControllerButton.R3),
-            (SDL.GamepadButton.LeftShoulder, ControllerButton.L1),
-            (SDL.GamepadButton.RightShoulder, ControllerButton.R1),
-            (SDL.GamepadButton.DPadUp, ControllerButton.Up),
-            (SDL.GamepadButton.DPadRight, ControllerButton.Right),
-            (SDL.GamepadButton.DPadDown, ControllerButton.Down),
-            (SDL.GamepadButton.DPadLeft, ControllerButton.Left),
-        ];
-
     private readonly ControllerInputState _inputState;
+    private readonly GamepadMapping _mapping;
     private readonly HashSet<uint> _knownGamepads = [];
 
     private nint _gamepad;
     private uint _gamepadId;
-    private bool _leftTriggerPressed;
-    private bool _rightTriggerPressed;
 
-    public SdlGamepadInput(ControllerInputState inputState)
+    public SdlGamepadInput(
+        ControllerInputState inputState,
+        GamepadMapping? mapping = null)
     {
         _inputState = inputState ??
             throw new ArgumentNullException(nameof(inputState));
+        _mapping = mapping ?? GamepadMapping.Default;
         OpenConnectedGamepads();
     }
 
@@ -70,27 +53,16 @@ internal sealed class SdlGamepadInput : IDisposable
         if (instanceId != _gamepadId)
             return;
 
-        ControllerButton? mappedButton = button switch
+        foreach (ControllerButton target in Enum.GetValues<ControllerButton>())
         {
-            SDL.GamepadButton.South => ControllerButton.Cross,
-            SDL.GamepadButton.East => ControllerButton.Circle,
-            SDL.GamepadButton.West => ControllerButton.Square,
-            SDL.GamepadButton.North => ControllerButton.Triangle,
-            SDL.GamepadButton.Back => ControllerButton.Select,
-            SDL.GamepadButton.Start => ControllerButton.Start,
-            SDL.GamepadButton.LeftStick => ControllerButton.L3,
-            SDL.GamepadButton.RightStick => ControllerButton.R3,
-            SDL.GamepadButton.LeftShoulder => ControllerButton.L1,
-            SDL.GamepadButton.RightShoulder => ControllerButton.R1,
-            SDL.GamepadButton.DPadUp => ControllerButton.Up,
-            SDL.GamepadButton.DPadRight => ControllerButton.Right,
-            SDL.GamepadButton.DPadDown => ControllerButton.Down,
-            SDL.GamepadButton.DPadLeft => ControllerButton.Left,
-            _ => null,
-        };
-
-        if (mappedButton is ControllerButton controllerButton)
-            _inputState.SetGamepadButton(controllerButton, pressed);
+            if (GamepadMapping.TryGetButton(
+                    _mapping.GetBinding(target),
+                    out SDL.GamepadButton source) &&
+                source == button)
+            {
+                _inputState.SetGamepadButton(target, pressed);
+            }
+        }
     }
 
     public void Poll()
@@ -98,28 +70,17 @@ internal sealed class SdlGamepadInput : IDisposable
         if (_gamepad == 0)
             return;
 
-        foreach ((SDL.GamepadButton source, ControllerButton target) in
-                 ButtonMappings)
+        foreach (ControllerButton target in Enum.GetValues<ControllerButton>())
         {
             _inputState.SetGamepadButton(
                 target,
-                SDL.GetGamepadButton(_gamepad, source));
+                IsBindingPressed(_mapping.GetBinding(target)));
         }
 
         PollAxis(SDL.GamepadAxis.LeftX, ControllerAxis.LeftX);
         PollAxis(SDL.GamepadAxis.LeftY, ControllerAxis.LeftY);
         PollAxis(SDL.GamepadAxis.RightX, ControllerAxis.RightX);
         PollAxis(SDL.GamepadAxis.RightY, ControllerAxis.RightY);
-        SetTrigger(
-            ControllerButton.L2,
-            SDL.GetGamepadAxis(_gamepad, SDL.GamepadAxis.LeftTrigger) >=
-                TriggerThreshold,
-            ref _leftTriggerPressed);
-        SetTrigger(
-            ControllerButton.R2,
-            SDL.GetGamepadAxis(_gamepad, SDL.GamepadAxis.RightTrigger) >=
-                TriggerThreshold,
-            ref _rightTriggerPressed);
     }
 
     public void HandleAxis(
@@ -137,44 +98,59 @@ internal sealed class SdlGamepadInput : IDisposable
                     ControllerAxis.LeftX,
                     ConvertAxis(value));
                 break;
-
             case SDL.GamepadAxis.LeftY:
                 _inputState.SetGamepadAxis(
                     ControllerAxis.LeftY,
                     ConvertAxis(value));
                 break;
-
             case SDL.GamepadAxis.RightX:
                 _inputState.SetGamepadAxis(
                     ControllerAxis.RightX,
                     ConvertAxis(value));
                 break;
-
             case SDL.GamepadAxis.RightY:
                 _inputState.SetGamepadAxis(
                     ControllerAxis.RightY,
                     ConvertAxis(value));
                 break;
+        }
 
-            case SDL.GamepadAxis.LeftTrigger:
-                SetTrigger(
-                    ControllerButton.L2,
-                    value >= TriggerThreshold,
-                    ref _leftTriggerPressed);
-                break;
+        if (axis is not (SDL.GamepadAxis.LeftTrigger or
+            SDL.GamepadAxis.RightTrigger))
+        {
+            return;
+        }
 
-            case SDL.GamepadAxis.RightTrigger:
-                SetTrigger(
-                    ControllerButton.R2,
-                    value >= TriggerThreshold,
-                    ref _rightTriggerPressed);
-                break;
+        foreach (ControllerButton target in Enum.GetValues<ControllerButton>())
+        {
+            if (GamepadMapping.TryGetTrigger(
+                    _mapping.GetBinding(target),
+                    out SDL.GamepadAxis source) &&
+                source == axis)
+            {
+                _inputState.SetGamepadButton(
+                    target,
+                    value >= TriggerThreshold);
+            }
         }
     }
 
     public void Dispose()
     {
         CloseCurrentGamepad();
+    }
+
+    private bool IsBindingPressed(GamepadBinding binding)
+    {
+        if (GamepadMapping.TryGetButton(
+                binding,
+                out SDL.GamepadButton button))
+        {
+            return SDL.GetGamepadButton(_gamepad, button);
+        }
+
+        return GamepadMapping.TryGetTrigger(binding, out SDL.GamepadAxis axis) &&
+               SDL.GetGamepadAxis(_gamepad, axis) >= TriggerThreshold;
     }
 
     private bool OpenGamepad(uint instanceId)
@@ -218,22 +194,8 @@ internal sealed class SdlGamepadInput : IDisposable
         SDL.CloseGamepad(_gamepad);
         _gamepad = 0;
         _gamepadId = 0;
-        _leftTriggerPressed = false;
-        _rightTriggerPressed = false;
         _inputState.ReleaseGamepad();
         Console.WriteLine("Gamepad desconectado.");
-    }
-
-    private void SetTrigger(
-        ControllerButton button,
-        bool pressed,
-        ref bool currentState)
-    {
-        if (pressed == currentState)
-            return;
-
-        currentState = pressed;
-        _inputState.SetGamepadButton(button, pressed);
     }
 
     private void PollAxis(SDL.GamepadAxis source, ControllerAxis target)

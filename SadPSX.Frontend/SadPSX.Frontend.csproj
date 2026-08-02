@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -14,14 +14,38 @@
     <PackageReference Include="SDL3-CS" Version="3.4.12.3" />
     <PackageReference Include="SDL3-CS.Windows" Version="3.4.12.1"
                       Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="SDL3-CS.Windows.Image" Version="3.4.4.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="SDL3-CS.Windows.TTF" Version="3.2.2.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="SDL3-CS.Windows.Mixer" Version="3.2.4.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     <PackageReference Include="SDL3-CS.Linux" Version="3.4.12.1"
                       Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="SDL3-CS.Linux.Image" Version="3.4.4.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="SDL3-CS.Linux.TTF" Version="3.2.2.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="SDL3-CS.Linux.Mixer" Version="3.2.4.7"
+                      Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
     <PackageReference Include="SDL3-CS.MacOS" Version="3.4.12.1"
+                      Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="SDL3-CS.MacOS.Image" Version="3.4.4.7"
+                      Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="SDL3-CS.MacOS.TTF" Version="3.2.2.7"
+                      Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="SDL3-CS.MacOS.Mixer" Version="3.2.4.7"
                       Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SadPSX.Core\SadPSX.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
